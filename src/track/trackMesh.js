@@ -78,6 +78,21 @@ function distToS(s, s2) {
   return Math.min(d, TOTAL_LENGTH - d);
 }
 
+/**
+ * Plan-view distance from (x,z) to the nearest centerline point on track
+ * sections OTHER than the one the object belongs to (|Δs| > excl). The
+ * figure-8 layout means "beside my section" can be "on top of another".
+ */
+function clearanceFromOtherSections(x, z, ownS, excl = 150) {
+  let best = Infinity;
+  for (const p of SAMPLES) {
+    if (distToS(p.s, ownS) < excl) continue;
+    const d = (p.x - x) ** 2 + (p.z - z) ** 2;
+    if (d < best) best = d;
+  }
+  return Math.sqrt(best);
+}
+
 // ---------- road ribbon ----------
 function buildRoad() {
   const pos = [], uv = [], idx = [];
@@ -423,6 +438,30 @@ function buildGrandstand(s, lateral, len = 120) {
   const group = new THREE.Group();
   const p = sampleAt(s);
   const side = Math.sign(lateral);
+
+  // push the stand outward until its full footprint clears the barriers of
+  // every part of the circuit (a straight stand beside a curving road, or
+  // another limb of the figure-8, can otherwise end up on the racing surface)
+  for (let guard = 0; guard < 12; guard++) {
+    let ok = true;
+    for (let f = -len / 2; f <= len / 2 && ok; f += len / 6) {
+      for (const zLocal of [1, -14]) {  // front edge .. back of roof
+        const off = lateral - side * zLocal;
+        const lx = p.x + p.nrmX * off + p.tanX * f;
+        const lz = p.z + p.nrmZ * off + p.tanZ * f;
+        // nearest centerline point anywhere, with its own wall offset
+        let best = Infinity, bq = null;
+        for (const q of SAMPLES) {
+          const d = (q.x - lx) ** 2 + (q.z - lz) ** 2;
+          if (d < best) { best = d; bq = q; }
+        }
+        const runoff = Math.abs(bq.curv) > 0.008 ? 26 : 14;
+        if (Math.sqrt(best) < Math.max(bq.wL, bq.wR) + runoff + 2) { ok = false; break; }
+      }
+    }
+    if (ok) break;
+    lateral += side * 5;
+  }
   const yaw = Math.atan2(p.tanX, p.tanZ) + Math.PI / 2; // local x along track
 
   const crowdTex = canvasTexture(512, 128, (ctx, w, h) => {
@@ -497,14 +536,29 @@ function buildFerrisWheel() {
 function buildPitBuilding() {
   const group = new THREE.Group();
   const p = sampleAt(TOTAL_LENGTH - 150);
-  const len = 320;
+  const len = 260;
   const bldg = new THREE.Mesh(new THREE.BoxGeometry(len, 12, 22),
     new THREE.MeshStandardMaterial({ color: 0xcfd4da, roughness: 0.7 }));
   const ang = -Math.atan2(p.tanZ, p.tanX);
   bldg.rotation.y = ang;
-  // pits on the right of the start/finish straight (negative lateral)
-  const lateral = -(p.wR + 26);
-  bldg.position.set(p.x + p.nrmX * lateral + p.tanX * 60, p.y + 6, p.z + p.nrmZ * lateral + p.tanZ * 60);
+  // right of the start/finish straight, leaving room for a pit lane; pushed
+  // out until all four corners clear the rest of the circuit
+  let lateral = -(p.wR + 38);
+  for (let guard = 0; guard < 8; guard++) {
+    let ok = true;
+    for (const f of [-len / 2, len / 2]) {
+      for (const d of [11, -11]) {
+        const cx = p.x + p.nrmX * (lateral + d) + p.tanX * (40 + f);
+        const cz = p.z + p.nrmZ * (lateral + d) + p.tanZ * (40 + f);
+        const ownS = (TOTAL_LENGTH - 150 + 40 + f + TOTAL_LENGTH) % TOTAL_LENGTH;
+        if (clearanceFromOtherSections(cx, cz, ownS, 250) < 18) { ok = false; break; }
+      }
+      if (!ok) break;
+    }
+    if (ok) break;
+    lateral -= 8;
+  }
+  bldg.position.set(p.x + p.nrmX * lateral + p.tanX * 40, p.y + 6, p.z + p.nrmZ * lateral + p.tanZ * 40);
   group.add(bldg);
   const sign = billboardText('SUZUKA CIRCUIT', 60, 5, { bg: '#13294b' });
   sign.rotation.y = Math.PI - Math.atan2(p.tanZ, p.tanX); // face the track
@@ -556,22 +610,35 @@ function buildTrees(terrain) {
 
 function buildSignage() {
   const group = new THREE.Group();
+  // helper: place a board on the preferred side, flip to the other side or
+  // skip entirely if it would sit on/over another section of the figure-8
+  const tryPlace = (obj, s, lat, yOff, orient) => {
+    const p = sampleAt(s);
+    for (const l of [lat, -lat]) {
+      const x = p.x + p.nrmX * l, z = p.z + p.nrmZ * l;
+      if (clearanceFromOtherSections(x, z, s) > 15) {
+        placeAt(obj, s, l, yOff, orient);
+        group.add(obj);
+        return true;
+      }
+    }
+    return false;
+  };
+
   // corner name boards
   for (const [s, name] of CORNERS) {
     const board = billboardText(name.replace(/^T\d+ ?/, '') || name, 9, 1.6,
       { bg: '#ffffff', fg: '#cc2200', fontScale: 0.55 });
     const p = sampleAt(s - 60);
     const side = p.curv > 0 ? 1 : -1; // inside of the corner
-    placeAt(board, s - 60, side * (Math.max(p.wL, p.wR) + 6), 2.2, 'facing');
-    group.add(board);
+    tryPlace(board, s - 60, side * (Math.max(p.wL, p.wR) + 6), 2.2, 'facing');
   }
   // braking markers before the heavy stops
   for (const stop of [695, 2920, 3850, 5395]) {
     for (const d of [100, 50]) {
       const b = billboardText(String(d), 1.6, 1.6, { bg: '#ffdd00', fg: '#cc0000', fontScale: 0.7 });
       const p = sampleAt(stop - 110 - d);
-      placeAt(b, stop - 110 - d, p.wL + 3.5, 1.2, 'facing');
-      group.add(b);
+      tryPlace(b, stop - 110 - d, p.wL + 3.5, 1.2, 'facing');
     }
   }
   // ad boards along the straights
@@ -582,8 +649,7 @@ function buildSignage() {
     if (Math.abs(p.curv) > 0.004) continue;
     const ad = billboardText(ads[i % ads.length], 14, 1.4,
       { bg: i % 2 ? '#0a2f6b' : '#0c6b2f' });
-    placeAt(ad, s, (i % 2 ? 1 : -1) * (Math.max(p.wL, p.wR) + 9), 1.0);
-    group.add(ad);
+    tryPlace(ad, s, (i % 2 ? 1 : -1) * (Math.max(p.wL, p.wR) + 9), 1.0, 'along');
   }
   return group;
 }
@@ -604,16 +670,27 @@ export function buildTrackWorld() {
 
   // grandstands: main straight (left), T1, hairpin, chicane
   world.add(buildGrandstand(150, 28, 300));
-  world.add(buildGrandstand(760, -42, 140));
+  world.add(buildGrandstand(760, -48, 90));
   world.add(buildGrandstand(2920, 42, 90));
   world.add(buildGrandstand(5420, 36, 110));
 
-  // Ferris wheel near the main grandstand / paddock area
+  // Ferris wheel: search the paddock side of the pit straight for a spot
+  // that clears the whole circuit (it is 80+ m across)
   const wheel = buildFerrisWheel();
   {
-    const p = sampleAt(TOTAL_LENGTH - 420);
-    wheel.position.set(p.x + p.nrmX * -120, p.y + 44, p.z + p.nrmZ * -120);
-    wheel.rotation.y = Math.random() * Math.PI;
+    let bestSpot = null, bestClear = 0;
+    for (let ds = -700; ds <= -100; ds += 60) {
+      for (const lat of [-160, -200, -240, 160, 200, 240]) {
+        const p = sampleAt(TOTAL_LENGTH + ds);
+        const x = p.x + p.nrmX * lat, z = p.z + p.nrmZ * lat;
+        const clear = clearanceFromOtherSections(x, z, 0, 0); // vs ANY section
+        if (clear > bestClear) { bestClear = clear; bestSpot = { x, z, y: p.y }; }
+        if (clear > 80) break;
+      }
+      if (bestClear > 80) break;
+    }
+    wheel.position.set(bestSpot.x, bestSpot.y + 44, bestSpot.z);
+    wheel.rotation.y = 0.8;
   }
   world.add(wheel);
 
