@@ -33,7 +33,7 @@ export const CAR = {
   idleRpm: 4000,
   gears: [2.85, 2.28, 1.86, 1.56, 1.33, 1.15, 1.01, 0.90],
   finalDrive: 3.6,
-  brakeForceMax: 42e3,       // N total at full pedal (before grip limit)
+  brakeForceMax: 62e3,       // N total at full pedal (before grip limit)
   muTire: 1.85,              // peak tire friction coefficient
   loadSensitivity: 0.08,     // mu falls with load: mu*(Fz0/Fz)^ls
   steerLockLow: 0.34,        // rad max road-wheel angle at low speed
@@ -75,6 +75,7 @@ export class CarPhysics {
     this.slipFront = 0; this.slipRear = 0;
     this.steerAngle = 0;
     this.throttleOut = 0; this.brakeOut = 0;
+    this.lockF = false; this.lockR = false;
     this.wallHit = 0;
     this.y = p.y;
     this.pitch = 0; this.roll = 0;
@@ -178,10 +179,21 @@ export class CarPhysics {
     }
     this.throttleOut = throttle;
 
-    // brakes
-    let brakeForce = input.brake * c.brakeForceMax;
-    const totalCap = muF * fzF + muR * fzR;
-    if (assists.abs) brakeForce = Math.min(brakeForce, totalCap * 0.97);
+    // brakes — per-axle, grip-limited. Without ABS an over-braked axle locks:
+    // less retardation and a collapse of lateral grip on that axle.
+    const brakeDemand = input.brake * c.brakeForceMax;
+    let brakeF = brakeDemand * 0.58, brakeR = brakeDemand * 0.42;
+    const capF = muF * fzF, capR = muR * fzR;
+    let lockF = false, lockR = false;
+    if (assists.abs) {
+      brakeF = Math.min(brakeF, capF * 0.96);
+      brakeR = Math.min(brakeR, capR * 0.94);
+    } else {
+      if (brakeF > capF) { lockF = true; brakeF = capF * 0.78; }
+      if (brakeR > capR) { lockR = true; brakeR = capR * 0.78; }
+    }
+    this.lockF = lockF && this.u > 3;
+    this.lockR = lockR && this.u > 3;
     this.brakeOut = input.brake;
 
     // ERS energy accounting
@@ -199,13 +211,17 @@ export class CarPhysics {
     this.slipFront = alphaF; this.slipRear = alphaR;
 
     // friction circle: longitudinal use reduces lateral capacity
-    const fxR = driveForce - (brakeForce * 0.42 + dragN * 0.5) * Math.sign(this.u);
-    const fxF = -(brakeForce * 0.58 + dragN * 0.5) * Math.sign(this.u);
+    const fxR = driveForce - (brakeR + dragN * 0.5) * Math.sign(this.u);
+    const fxF = -(brakeF + dragN * 0.5) * Math.sign(this.u);
     const latCapF = Math.sqrt(Math.max(0.02, 1 - Math.min(1, Math.abs(fxF) / (muF * fzF)) ** 2));
     const latCapR = Math.sqrt(Math.max(0.02, 1 - Math.min(1, Math.abs(fxR) / (muR * fzR)) ** 2));
 
     let fyF = -muF * fzF * latCapF * tireForceCurve(alphaF / SLIP_PEAK);
     let fyR = -muR * fzR * latCapR * tireForceCurve(alphaR / SLIP_PEAK);
+
+    // locked wheels slide: steering (front) / stability (rear) collapse
+    if (this.lockF) fyF *= 0.25;
+    if (this.lockR) fyR *= 0.25;
 
     // stability assist: gentle yaw damping (electronic differential feel)
     if (assists.stability) {
