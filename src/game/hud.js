@@ -36,7 +36,10 @@ export class Hud {
       <div id="hud-corner"></div>
       <div id="hud-assists"></div>
       <div id="hud-msg"></div>
-      <div id="hud-offtrack">コースに戻ってください (R: リスポーン)</div>
+      <div id="hud-respawn">
+        <div class="num">3</div>
+        <div class="lbl">コースに復帰します (R: 即時)</div>
+      </div>
     `;
     this.q = (id) => rootEl.querySelector('#' + id);
     this.lights = [];
@@ -94,6 +97,21 @@ export class Hud {
     b.lineTo(sx, sy + 6);
     b.stroke();
     this.mapCtx = ctx;
+  }
+
+  /** Show the auto-respawn countdown anchored at screen position (px). */
+  showRespawn(x, y, count) {
+    const el = this.q('hud-respawn');
+    el.style.display = 'block';
+    // keep it on screen even in first-person views
+    el.style.left = Math.max(70, Math.min(innerWidth - 70, x)) + 'px';
+    el.style.top = Math.max(90, Math.min(innerHeight - 30, y)) + 'px';
+    const num = el.querySelector('.num');
+    if (num.textContent !== String(count)) num.textContent = count;
+  }
+
+  hideRespawn() {
+    this.q('hud-respawn').style.display = 'none';
   }
 
   showMsg(text, ms = 2500) {
@@ -154,7 +172,6 @@ export class Hud {
       `<span class="${assists.autoGear ? 'on' : ''}">AT</span>` +
       `<span class="${assists.autoX ? 'on' : ''}">aX</span>`;
 
-    this.q('hud-offtrack').style.opacity = (!car.onTrack && car.speed < 6) ? 1 : 0;
 
     // minimap
     const ctx = this.mapCtx;

@@ -95,8 +95,13 @@
   #hud-msg { position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
     font-size: 26px; font-weight: bold; font-style: italic; opacity: 0; transition: opacity 0.4s;
     text-shadow: 0 2px 12px #000; white-space: nowrap; }
-  #hud-offtrack { position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
-    color: #ffb300; font-size: 15px; opacity: 0; transition: opacity 0.3s; }
+  #hud-respawn { position: absolute; transform: translate(-50%, -100%); display: none;
+    text-align: center; }
+  #hud-respawn .num { font-size: 58px; font-weight: bold; font-style: italic; color: #ffb300;
+    text-shadow: 0 0 14px rgba(0,0,0,0.9), 0 0 26px #ff8800; line-height: 1; }
+  #hud-respawn .lbl { font-size: 13px; font-weight: bold; color: #fff; margin-top: 2px;
+    background: rgba(8,10,18,0.72); border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 12px; padding: 3px 12px; white-space: nowrap; }
 
   /* ---------- start lights overlay ---------- */
   #lights { position: absolute; top: 12vh; left: 50%; transform: translateX(-50%);

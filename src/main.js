@@ -95,6 +95,8 @@ const physics = new CarPhysics();
 let carVis = null;            // player car model
 let ghostVis = null;          // ghost car model
 let wheelSpinAcc = 0;
+let stuckTimer = 0;           // off-track-and-stopped auto-respawn countdown
+const RESPAWN_AFTER = 3;      // seconds
 
 // ---------- driver select menu ----------
 const menuEl = document.getElementById('menu');
@@ -151,6 +153,7 @@ function startRace(team, driver) {
   ghostVis.group.visible = false;
 
   physics.reset(TOTAL_LENGTH - 14, 3.2);   // P1 grid slot
+  stuckTimer = 0;
   timing.reset();
   ghost.beginLap();
   hud.setDriver(team, driver);
@@ -254,6 +257,31 @@ function frame(now) {
 
     rig.update(physics, dt);
     audio.update(physics, input.throttle);
+
+    // ---- auto-respawn: stopped off track -> 3 s countdown near the car ----
+    if (!physics.onTrack && physics.speed < 2.0) stuckTimer += dt;
+    else stuckTimer = 0;
+    if (stuckTimer > 0) {
+      const remain = RESPAWN_AFTER - stuckTimer;
+      if (remain <= 0) {
+        physics.reset(physics.trackS(), 0);   // nearest centerline point
+        physics.u = 8;
+        rig.snapBehind(physics);
+        stuckTimer = 0;
+        hud.hideRespawn();
+        hud.showMsg('コースに復帰しました', 1200);
+      } else {
+        // anchor the countdown above the car in screen space
+        const p = new THREE.Vector3(physics.x, physics.y + 1.9, physics.z).project(camera);
+        const sx = (p.x * 0.5 + 0.5) * innerWidth;
+        const sy = (-p.y * 0.5 + 0.5) * innerHeight;
+        const visible = p.z < 1 && p.z > -1;
+        hud.showRespawn(visible ? sx : innerWidth / 2, visible ? sy : innerHeight * 0.4,
+          Math.ceil(remain));
+      }
+    } else {
+      hud.hideRespawn();
+    }
   }
 
   // car visuals
