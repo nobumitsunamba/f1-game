@@ -1,0 +1,343 @@
+// F1 2026 Suzuka Simulator — entry point.
+// Wires together: scene/lighting, track world, car physics & model, cameras,
+// HUD, audio, timing/ghost, driver-select UI and the race start sequence.
+import * as THREE from 'three';
+import { buildTrackWorld } from './track/trackMesh.js';
+import { TOTAL_LENGTH, TRACK_NAME } from './track/suzuka.js';
+import { buildCar } from './car/carModel.js';
+import { CarPhysics, CAR } from './car/physics.js';
+import { TEAMS } from './data/grid2026.js';
+import { Input } from './game/input.js';
+import { CameraRig, CAMERA_MODES } from './game/cameras.js';
+import { Hud } from './game/hud.js';
+import { Timing, fmtTime } from './game/timing.js';
+import { EngineAudio } from './game/audio.js';
+import { Ghost } from './game/ghost.js';
+import { autopilotControl } from './game/autopilot.js';
+
+// ---------- renderer / scene ----------
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xc4d7ee, 600, 2600);
+
+const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.3, 6000);
+camera.position.set(0, 40, 80);
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// sky dome (vertex-color gradient)
+{
+  const skyG = new THREE.SphereGeometry(4500, 24, 14);
+  const pos = skyG.attributes.position;
+  const col = [];
+  for (let i = 0; i < pos.count; i++) {
+    const t = Math.max(0, Math.min(1, (pos.getY(i) / 4500 + 0.12) / 0.9));
+    const top = new THREE.Color(0x2f6fd1), hor = new THREE.Color(0xdce9f7);
+    const c = hor.clone().lerp(top, Math.pow(t, 0.7));
+    col.push(c.r, c.g, c.b);
+  }
+  skyG.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  const sky = new THREE.Mesh(skyG, new THREE.MeshBasicMaterial({
+    vertexColors: true, side: THREE.BackSide, fog: false,
+  }));
+  scene.add(sky);
+}
+
+// lighting: afternoon sun
+const sun = new THREE.DirectionalLight(0xfff2dd, 2.6);
+sun.position.set(500, 700, -300);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 100; sun.shadow.camera.far = 1800;
+const SHADOW_R = 60;
+sun.shadow.camera.left = -SHADOW_R; sun.shadow.camera.right = SHADOW_R;
+sun.shadow.camera.top = SHADOW_R; sun.shadow.camera.bottom = -SHADOW_R;
+sun.shadow.bias = -0.0004;
+scene.add(sun, sun.target);
+scene.add(new THREE.HemisphereLight(0xbdd5f2, 0x55683f, 1.25));
+
+// ---------- world ----------
+const { world, startLights, ferrisWheel } = buildTrackWorld();
+scene.add(world);
+
+// ---------- game state ----------
+const state = {
+  phase: 'menu',              // menu | countdown | race
+  team: TEAMS[0],
+  driver: TEAMS[0].drivers[0],
+  countT: 0,
+  lightsOut: 0,
+};
+const assists = { tc: true, abs: true, stability: true, autoGear: true, autoX: true };
+let muted = false;
+
+const input = new Input();
+const rig = new CameraRig(camera);
+const hud = new Hud(document.getElementById('hud'));
+const timing = new Timing();
+const audio = new EngineAudio();
+const ghost = new Ghost();
+
+const physics = new CarPhysics();
+let carVis = null;            // player car model
+let ghostVis = null;          // ghost car model
+let wheelSpinAcc = 0;
+
+// ---------- driver select menu ----------
+const menuEl = document.getElementById('menu');
+function buildMenu() {
+  menuEl.innerHTML = `
+    <h1>F1 2026 RACING SIMULATOR</h1>
+    <h2>${TRACK_NAME} — 全長 ${(TOTAL_LENGTH / 1000).toFixed(3)} km ｜ ドライバーを選択してください</h2>
+    <div id="teams"></div>
+    <button id="start-race" disabled>SELECT DRIVER</button>
+    <div class="controls-help">
+      <b>操作:</b> ↑/W アクセル ｜ ↓/S ブレーキ ｜ ←→/A D ステアリング ｜ Space オーバーテイクブースト(ERS)<br>
+      X アクティブエアロ(Xモード) ｜ E/Q または Shift/Ctrl ギア ｜ C カメラ切替 ｜ R リスポーン ｜ M ミュート<br>
+      <b>アシスト切替:</b> F1 トラクション ｜ F2 ABS ｜ F3 スタビリティ ｜ F4 オートシフト ｜ F5 自動エアロ ｜ ゲームパッド対応
+    </div>`;
+  const teamsEl = menuEl.querySelector('#teams');
+  const startBtn = menuEl.querySelector('#start-race');
+  let selected = null;
+  for (const team of TEAMS) {
+    const c = '#' + team.color.toString(16).padStart(6, '0');
+    const div = document.createElement('div');
+    div.className = 'team';
+    div.innerHTML = `<div class="tname"><i style="background:${c}"></i>${team.name} <small>${team.fullName} ・ ${team.pu}</small></div>`;
+    team.drivers.forEach((drv, di) => {
+      const btn = document.createElement('button');
+      btn.className = 'drv';
+      btn.innerHTML = `<span class="dnum" style="color:${c}">${drv.num}</span> ${drv.name} <small>${drv.abbr}</small>`;
+      btn.onclick = () => {
+        menuEl.querySelectorAll('.drv.sel').forEach(b => b.classList.remove('sel'));
+        btn.classList.add('sel');
+        selected = { team, drv };
+        startBtn.disabled = false;
+        startBtn.textContent = `${drv.abbr} でコースイン`;
+      };
+      div.appendChild(btn);
+    });
+    teamsEl.appendChild(div);
+  }
+  startBtn.onclick = () => { if (selected) startRace(selected.team, selected.drv); };
+}
+buildMenu();
+
+// ---------- race lifecycle ----------
+function startRace(team, driver) {
+  state.team = team;
+  state.driver = driver;
+
+  if (carVis) { scene.remove(carVis.group); }
+  carVis = buildCar(team, driver.num);
+  scene.add(carVis.group);
+  if (!ghostVis) {
+    ghostVis = buildCar(team, driver.num, { ghost: true });
+    scene.add(ghostVis.group);
+  }
+  ghostVis.group.visible = false;
+
+  physics.reset(TOTAL_LENGTH - 14, 3.2);   // P1 grid slot
+  timing.reset();
+  ghost.beginLap();
+  hud.setDriver(team, driver);
+
+  menuEl.style.display = 'none';
+  document.getElementById('hud').style.display = 'block';
+  audio.resume();
+  rig.snapBehind(physics);
+
+  // formation: lights sequence (wall-clock based so low fps can't stretch it)
+  state.phase = 'countdown';
+  state.countStart = performance.now();
+  buildLightsOverlay();
+  hud.showMsg(`${driver.name} ― 鈴鹿サーキット タイムアタック`, 3000);
+}
+
+const lightsEl = document.getElementById('lights');
+function buildLightsOverlay() {
+  lightsEl.innerHTML = '';
+  lightsEl.style.display = 'flex';
+  for (let i = 0; i < 5; i++) {
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.innerHTML = '<div class="bulb"></div><div class="bulb"></div>';
+    lightsEl.appendChild(col);
+  }
+}
+
+function setStartLights(n, out) {
+  [...lightsEl.children].forEach((col, i) => col.classList.toggle('on', !out && i < n));
+  startLights.forEach((m, i) => {
+    m.material.color.set(!out && i < n ? 0xff1801 : 0x220000);
+    m.material.emissive?.set?.(!out && i < n ? 0xff1801 : 0x000000);
+  });
+  if (out) setTimeout(() => { lightsEl.style.display = 'none'; }, 900);
+}
+
+function backToMenu() {
+  state.phase = 'menu';
+  menuEl.style.display = 'flex';
+  document.getElementById('hud').style.display = 'none';
+  lightsEl.style.display = 'none';
+  audio.setMuted(true);
+}
+
+// ---------- main loop ----------
+let last = performance.now();
+const FIXED = 1 / 120;
+let acc = 0;
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  let dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+
+  input.update(dt);
+  handleGlobalKeys();
+
+  ferrisWheel.userData.wheelRim.rotation.z += dt * 0.05; // idle scenery motion
+
+  if (state.phase === 'countdown') {
+    const countT = (now - state.countStart) / 1000;
+    const n = Math.min(5, Math.floor(countT / 0.9));
+    if (countT < 4.5) setStartLights(n, false);
+    else if (state.phase === 'countdown') {
+      setStartLights(5, true);          // lights out!
+      state.phase = 'race';
+      timing.start();
+      hud.showMsg('IT\'S LIGHTS OUT AND AWAY WE GO!', 2200);
+    }
+    rig.update(physics, dt);
+  }
+
+  if (state.phase === 'race') {
+    acc += dt;
+    const frameInput = window.__sim?.autopilot
+      ? autopilotControl(physics)
+      : {
+        throttle: input.throttle, brake: input.brake, steer: input.steer,
+        boost: input.boost, xModeRequest: input.xModeRequest,
+        gearUp: input.gearUp, gearDown: input.gearDown,
+      };
+    while (acc >= FIXED) {
+      physics.step(FIXED, frameInput, assists);
+      frameInput.gearUp = frameInput.gearDown = false;
+      acc -= FIXED;
+    }
+    physics._boosting = input.boost;
+
+    // timing / ghost
+    const s = physics.trackS();
+    timing.update(dt, s);
+    if (timing.running && timing.lap > 0) ghost.record(timing.lapTime, physics);
+    if (timing.lapJustCompleted != null) {
+      const t = timing.lapJustCompleted;
+      const isBest = timing.bestLap === t;
+      ghost.lapDone(t, isBest);
+      ghost.beginLap();
+      hud.showMsg(`LAP ${fmtTime(t)}${isBest ? '  ― ベストラップ!' : ''}`, 3000);
+    }
+
+    rig.update(physics, dt);
+    audio.update(physics, input.throttle);
+  }
+
+  // car visuals
+  if (carVis) {
+    carVis.group.position.set(physics.x, physics.y, physics.z);
+    carVis.group.rotation.set(0, -physics.heading, 0);
+    wheelSpinAcc += physics.u / CAR.wheelRadius * dt;
+    carVis.update({
+      steerAngle: physics.steerAngle, xMode: physics.xMode,
+      pitch: physics.pitch, roll: physics.roll,
+      wheelSpin: physics.u / CAR.wheelRadius * dt,
+    });
+    // sun shadow follows the car
+    sun.target.position.set(physics.x, physics.y, physics.z);
+    sun.position.set(physics.x + 250, physics.y + 350, physics.z - 150);
+  }
+
+  // ghost visuals
+  let ghostPose = null;
+  if (ghostVis && state.phase === 'race' && timing.running) {
+    ghostPose = ghost.poseAt(timing.lapTime);
+    if (ghostPose && timing.lap > 0) {
+      ghostVis.group.visible = true;
+      ghostVis.group.position.set(ghostPose.x, ghostPose.y, ghostPose.z);
+      ghostVis.group.rotation.set(0, -ghostPose.h, 0);
+    } else ghostVis.group.visible = false;
+  }
+
+  if (state.phase !== 'menu') {
+    hud.update(physics, timing, assists,
+      ghostPose, '#' + state.team.color.toString(16).padStart(6, '0'));
+  }
+
+  renderer.render(scene, camera);
+  input.endFrame();
+}
+
+function handleGlobalKeys() {
+  if (input.pressed('KeyC')) {
+    rig.cycle();
+    hud.showMsg(`カメラ: ${CAMERA_MODES[rig.mode]}`, 1200);
+  }
+  if (input.pressed('KeyR') && state.phase === 'race') {
+    // respawn at the nearest centerline point, rolling slowly
+    const s = physics.trackS();
+    physics.reset(s, 0);
+    physics.u = 8;
+    hud.showMsg('リスポーン', 1000);
+  }
+  if (input.pressed('KeyM')) { muted = !muted; audio.setMuted(muted); }
+  if (input.pressed('Escape') && state.phase !== 'menu') backToMenu();
+  if (input.pressed('F1')) { assists.tc = !assists.tc; hud.showMsg(`トラクションコントロール: ${assists.tc ? 'ON' : 'OFF'}`, 1200); }
+  if (input.pressed('F2')) { assists.abs = !assists.abs; hud.showMsg(`ABS: ${assists.abs ? 'ON' : 'OFF'}`, 1200); }
+  if (input.pressed('F3')) { assists.stability = !assists.stability; hud.showMsg(`スタビリティ: ${assists.stability ? 'ON' : 'OFF'}`, 1200); }
+  if (input.pressed('F4')) { assists.autoGear = !assists.autoGear; hud.showMsg(`オートシフト: ${assists.autoGear ? 'ON' : 'OFF'}`, 1200); }
+  if (input.pressed('F5')) { assists.autoX = !assists.autoX; hud.showMsg(`自動アクティブエアロ: ${assists.autoX ? 'ON' : 'OFF'}`, 1200); }
+}
+
+// prevent F1-F5 browser defaults
+window.addEventListener('keydown', (e) => {
+  if (['F1', 'F2', 'F3', 'F4', 'F5'].includes(e.code)) e.preventDefault();
+});
+
+requestAnimationFrame(frame);
+// reveal
+requestAnimationFrame(() => { document.getElementById('fade').style.opacity = 0; });
+
+// debug handle (used by automated verification; harmless in production)
+window.__sim = {
+  physics, rig, timing, autopilot: false,
+  teleport: (s, speed = 40) => {
+    physics.reset(s, 0);
+    physics.u = speed;
+    rig.snapBehind(physics);
+  },
+  // synchronous physics fast-forward with autopilot (no rendering)
+  simulate: (seconds) => {
+    const laps = [];
+    for (let t = 0; t < seconds; t += FIXED) {
+      const ctl = autopilotControl(physics);
+      physics.step(FIXED, ctl, assists);
+      timing.update(FIXED, physics.trackS());
+      if (timing.lapJustCompleted != null) laps.push(timing.lapJustCompleted);
+    }
+    return { laps, s: physics.trackS(), kmh: physics.speedKmh, onTrack: physics.onTrack };
+  },
+};
