@@ -23,6 +23,7 @@ export class Hud {
       </div>
       <div id="hud-timing">
         <div id="hud-driver"></div>
+        <div class="t-row" id="hud-pos-row" style="display:none"><span>POS</span><b id="hud-pos">-</b></div>
         <div class="t-row"><span>LAP</span><b id="hud-lap">0</b></div>
         <div class="t-row"><span>TIME</span><b id="hud-time">0:00.000</b></div>
         <div class="t-row"><span>LAST</span><b id="hud-last">--:--.---</b></div>
@@ -32,6 +33,7 @@ export class Hud {
           <span class="sec" id="sec0">S1</span><span class="sec" id="sec1">S2</span><span class="sec" id="sec2">S3</span>
         </div>
       </div>
+      <div id="hud-board"></div>
       <canvas id="hud-map" width="230" height="230"></canvas>
       <div id="hud-corner"></div>
       <div id="hud-assists"></div>
@@ -97,6 +99,40 @@ export class Hud {
     b.lineTo(sx, sy + 6);
     b.stroke();
     this.mapCtx = ctx;
+  }
+
+  /**
+   * Race-mode panel: position, lap x/y and a compact leaderboard.
+   * standings: [{abbr, team, lap, progress, isPlayer}] sorted by progress;
+   * playerSpeed (m/s) converts distance gaps to rough time gaps.
+   */
+  updateRace(standings, lapTarget, playerSpeed) {
+    const posRow = this.q('hud-pos-row');
+    posRow.style.display = 'flex';
+    const meIdx = standings.findIndex(r => r.isPlayer);
+    this.q('hud-pos').textContent = `P${meIdx + 1} / ${standings.length}`;
+    const me = standings[meIdx];
+    this.q('hud-lap').textContent = `${Math.max(1, Math.min(lapTarget, me.lap || 1))} / ${lapTarget}`;
+
+    const board = this.q('hud-board');
+    board.style.display = 'block';
+    const vRef = Math.max(25, playerSpeed);
+    board.innerHTML = standings.map((r, i) => {
+      const c = '#' + r.team.color.toString(16).padStart(6, '0');
+      let gap = '';
+      if (i > 0) {
+        const dm = standings[i - 1].progress - r.progress;
+        gap = '+' + (dm / vRef).toFixed(1);
+      }
+      return `<div class="row${r.isPlayer ? ' me' : ''}">` +
+        `<span class="p">${i + 1}</span><i style="background:${c}"></i>` +
+        `<span>${r.abbr}</span><span class="gap">${gap}</span></div>`;
+    }).join('');
+  }
+
+  hideRace() {
+    this.q('hud-pos-row').style.display = 'none';
+    this.q('hud-board').style.display = 'none';
   }
 
   /** Show the auto-respawn countdown anchored at screen position (px). */

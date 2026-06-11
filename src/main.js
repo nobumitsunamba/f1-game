@@ -14,6 +14,7 @@ import { Timing, fmtTime } from './game/timing.js';
 import { EngineAudio } from './game/audio.js';
 import { Ghost } from './game/ghost.js';
 import { autopilotControl } from './game/autopilot.js';
+import { RaceManager } from './game/race.js';
 
 // ---------- renderer / scene ----------
 const canvas = document.getElementById('gl');
@@ -75,11 +76,13 @@ scene.add(world);
 
 // ---------- game state ----------
 const state = {
-  phase: 'menu',              // menu | countdown | race
+  phase: 'menu',              // menu | countdown | race | finished
   team: TEAMS[0],
   driver: TEAMS[0].drivers[0],
   countT: 0,
   lightsOut: 0,
+  race: null,                 // RaceManager when opponents selected
+  lapTarget: 3,
 };
 const assists = { tc: true, abs: true, stability: true, autoGear: true, autoX: true };
 let muted = false;
@@ -105,6 +108,26 @@ function buildMenu() {
     <h1>F1 2026 RACING SIMULATOR</h1>
     <h2>${TRACK_NAME} — 全長 ${(TOTAL_LENGTH / 1000).toFixed(3)} km ｜ ドライバーを選択してください</h2>
     <div id="teams"></div>
+    <div id="race-setup">
+      <h3>AI対戦</h3>
+      <div class="hint">対戦したい相手を選んでください(0台ならタイムアタック)。あなたは最後尾グリッドからスタートします。</div>
+      <div id="opp-chips"></div>
+      <div class="opt-row">
+        <span class="lbl"></span>
+        <button class="opt-btn" id="opp-all">全選択</button>
+        <button class="opt-btn" id="opp-none">クリア</button>
+      </div>
+      <div class="opt-row"><span class="lbl">周回数</span>
+        <button class="opt-btn lap-btn" data-laps="1">1</button>
+        <button class="opt-btn lap-btn sel" data-laps="3">3</button>
+        <button class="opt-btn lap-btn" data-laps="5">5</button>
+      </div>
+      <div class="opt-row"><span class="lbl">AIの速さ</span>
+        <button class="opt-btn diff-btn" data-diff="0.88">易しい</button>
+        <button class="opt-btn diff-btn sel" data-diff="0.96">普通</button>
+        <button class="opt-btn diff-btn" data-diff="1.04">速い</button>
+      </div>
+    </div>
     <button id="start-race" disabled>SELECT DRIVER</button>
     <div class="controls-help">
       <b>操作:</b> ↑/W アクセル ｜ ↓/S ブレーキ ｜ ←→/A D ステアリング ｜ Space オーバーテイクブースト(ERS)<br>
@@ -113,7 +136,42 @@ function buildMenu() {
     </div>`;
   const teamsEl = menuEl.querySelector('#teams');
   const startBtn = menuEl.querySelector('#start-race');
+  const setupEl = menuEl.querySelector('#race-setup');
+  const chipsEl = menuEl.querySelector('#opp-chips');
   let selected = null;
+  const opponents = new Set();   // keys "teamId:driverIndex"
+  let lapTarget = 3, difficulty = 0.96;
+
+  const keyOf = (team, di) => `${team.id}:${di}`;
+
+  const refreshStart = () => {
+    if (!selected) return;
+    startBtn.disabled = false;
+    startBtn.textContent = opponents.size
+      ? `${selected.drv.abbr} で ${opponents.size} 台とレース開始(${lapTarget}周)`
+      : `${selected.drv.abbr} でタイムアタック開始`;
+  };
+
+  const renderChips = () => {
+    chipsEl.innerHTML = '';
+    for (const team of TEAMS) {
+      const c = '#' + team.color.toString(16).padStart(6, '0');
+      team.drivers.forEach((drv, di) => {
+        if (selected && selected.team.id === team.id && selected.di === di) return;
+        const key = keyOf(team, di);
+        const chip = document.createElement('button');
+        chip.className = 'opp-chip' + (opponents.has(key) ? ' sel' : '');
+        chip.innerHTML = `<i style="background:${c}"></i>${drv.abbr} ${drv.name}`;
+        chip.onclick = () => {
+          opponents.has(key) ? opponents.delete(key) : opponents.add(key);
+          chip.classList.toggle('sel');
+          refreshStart();
+        };
+        chipsEl.appendChild(chip);
+      });
+    }
+  };
+
   for (const team of TEAMS) {
     const c = '#' + team.color.toString(16).padStart(6, '0');
     const div = document.createElement('div');
@@ -126,22 +184,55 @@ function buildMenu() {
       btn.onclick = () => {
         menuEl.querySelectorAll('.drv.sel').forEach(b => b.classList.remove('sel'));
         btn.classList.add('sel');
-        selected = { team, drv };
-        startBtn.disabled = false;
-        startBtn.textContent = `${drv.abbr} でコースイン`;
+        selected = { team, drv, di };
+        opponents.delete(keyOf(team, di));   // can't race yourself
+        setupEl.style.display = 'block';
+        renderChips();
+        refreshStart();
       };
       div.appendChild(btn);
     });
     teamsEl.appendChild(div);
   }
-  startBtn.onclick = () => { if (selected) startRace(selected.team, selected.drv); };
+
+  menuEl.querySelector('#opp-all').onclick = () => {
+    for (const team of TEAMS) team.drivers.forEach((drv, di) => {
+      if (selected && selected.team.id === team.id && selected.di === di) return;
+      opponents.add(keyOf(team, di));
+    });
+    renderChips(); refreshStart();
+  };
+  menuEl.querySelector('#opp-none').onclick = () => {
+    opponents.clear(); renderChips(); refreshStart();
+  };
+  menuEl.querySelectorAll('.lap-btn').forEach(b => b.onclick = () => {
+    menuEl.querySelectorAll('.lap-btn').forEach(x => x.classList.remove('sel'));
+    b.classList.add('sel');
+    lapTarget = Number(b.dataset.laps);
+    refreshStart();
+  });
+  menuEl.querySelectorAll('.diff-btn').forEach(b => b.onclick = () => {
+    menuEl.querySelectorAll('.diff-btn').forEach(x => x.classList.remove('sel'));
+    b.classList.add('sel');
+    difficulty = Number(b.dataset.diff);
+  });
+
+  startBtn.onclick = () => {
+    if (!selected) return;
+    const entries = [];
+    for (const team of TEAMS) team.drivers.forEach((drv, di) => {
+      if (opponents.has(keyOf(team, di))) entries.push({ team, driver: drv });
+    });
+    startRace(selected.team, selected.drv, { entries, lapTarget, difficulty });
+  };
 }
 buildMenu();
 
 // ---------- race lifecycle ----------
-function startRace(team, driver) {
+function startRace(team, driver, opts = {}) {
   state.team = team;
   state.driver = driver;
+  state.lapTarget = opts.lapTarget ?? 3;
 
   if (carVis) { scene.remove(carVis.group); }
   carVis = buildCar(team, driver.num);
@@ -152,11 +243,20 @@ function startRace(team, driver) {
   }
   ghostVis.group.visible = false;
 
-  physics.reset(TOTAL_LENGTH - 14, 3.2);   // P1 grid slot
+  state.race?.dispose();
+  state.race = null;
+  if (opts.entries?.length) {
+    state.race = new RaceManager(scene, opts.entries, state.lapTarget, opts.difficulty ?? 0.96);
+    state.race.placeGrid(physics);   // AI by pace from P1, player at the back
+  } else {
+    physics.reset(TOTAL_LENGTH - 14, 3.2);   // time attack: P1 grid slot
+  }
   stuckTimer = 0;
   timing.reset();
   ghost.beginLap();
   hud.setDriver(team, driver);
+  hud.hideRace();
+  document.getElementById('results').style.display = 'none';
 
   menuEl.style.display = 'none';
   document.getElementById('hud').style.display = 'block';
@@ -167,7 +267,9 @@ function startRace(team, driver) {
   state.phase = 'countdown';
   state.countStart = performance.now();
   buildLightsOverlay();
-  hud.showMsg(`${driver.name} ― 鈴鹿サーキット タイムアタック`, 3000);
+  hud.showMsg(state.race
+    ? `${driver.name} ― ${state.race.cars.length}台と${state.lapTarget}周レース`
+    : `${driver.name} ― 鈴鹿サーキット タイムアタック`, 3000);
 }
 
 const lightsEl = document.getElementById('lights');
@@ -193,16 +295,41 @@ function setStartLights(n, out) {
 
 function backToMenu() {
   state.phase = 'menu';
+  state.race?.dispose();
+  state.race = null;
+  hud.hideRace();
+  document.getElementById('results').style.display = 'none';
   menuEl.style.display = 'flex';
   document.getElementById('hud').style.display = 'none';
   lightsEl.style.display = 'none';
   audio.setMuted(true);
 }
 
+function finishRace() {
+  state.phase = 'finished';
+  timing.running = false;
+  const standings = state.race.standings(
+    physics, state.lapTarget + 1, state.driver.abbr, state.team);
+  const meIdx = standings.findIndex(r => r.isPlayer);
+  const el = document.getElementById('results');
+  el.innerHTML = `
+    <h2>🏁 FINISH — P${meIdx + 1}</h2>
+    <div class="sub">${state.driver.name} ｜ ${state.lapTarget}周 ｜ ベストラップ ${fmtTime(timing.bestLap)}</div>
+    <div class="list">${standings.map((r, i) => {
+      const c = '#' + r.team.color.toString(16).padStart(6, '0');
+      return `<div class="row${r.isPlayer ? ' me' : ''}">` +
+        `<span class="p">P${i + 1}</span><i style="background:${c}"></i>` +
+        `<span>${r.abbr}</span><small>${r.team.name}</small></div>`;
+    }).join('')}</div>
+    <div class="esc">Esc でメニューに戻る</div>`;
+  el.style.display = 'flex';
+}
+
 // ---------- main loop ----------
 let last = performance.now();
 const FIXED = 1 / 120;
 let acc = 0;
+let lastBoard = 0;
 
 function frame(now) {
   requestAnimationFrame(frame);
@@ -222,44 +349,58 @@ function frame(now) {
       setStartLights(5, true);          // lights out!
       state.phase = 'race';
       timing.start();
+      state.race?.start();
       hud.showMsg('IT\'S LIGHTS OUT AND AWAY WE GO!', 2200);
     }
+    state.race?.updateVisuals();
     rig.update(physics, dt);
   }
 
-  if (state.phase === 'race') {
+  if (state.phase === 'race' || state.phase === 'finished') {
     acc += dt;
-    const frameInput = window.__sim?.autopilot
-      ? autopilotControl(physics)
-      : {
-        throttle: input.throttle, brake: input.brake, steer: input.steer,
-        boost: input.boost, xModeRequest: input.xModeRequest,
-        gearUp: input.gearUp, gearDown: input.gearDown,
-      };
+    const frameInput = state.phase === 'finished'
+      ? { throttle: 0, brake: 0.3, steer: input.steer }   // coast to a stop
+      : window.__sim?.autopilot
+        ? autopilotControl(physics)
+        : {
+          throttle: input.throttle, brake: input.brake, steer: input.steer,
+          boost: input.boost, xModeRequest: input.xModeRequest,
+          gearUp: input.gearUp, gearDown: input.gearDown,
+        };
     while (acc >= FIXED) {
       physics.step(FIXED, frameInput, assists);
+      state.race?.step(FIXED, physics);
       frameInput.gearUp = frameInput.gearDown = false;
       acc -= FIXED;
     }
     physics._boosting = input.boost;
+    state.race?.updateVisuals();
 
-    // timing / ghost
+    // timing / ghost (ghost car only in time attack)
     const s = physics.trackS();
-    timing.update(dt, s);
-    if (timing.running && timing.lap > 0) ghost.record(timing.lapTime, physics);
-    if (timing.lapJustCompleted != null) {
-      const t = timing.lapJustCompleted;
-      const isBest = timing.bestLap === t;
-      ghost.lapDone(t, isBest);
-      ghost.beginLap();
-      hud.showMsg(`LAP ${fmtTime(t)}${isBest ? '  ― ベストラップ!' : ''}`, 3000);
+    if (state.phase === 'race') {
+      timing.update(dt, s);
+      if (timing.running && timing.lap > 0 && !state.race) ghost.record(timing.lapTime, physics);
+      if (timing.lapJustCompleted != null) {
+        const t = timing.lapJustCompleted;
+        const isBest = timing.bestLap === t;
+        if (!state.race) {
+          ghost.lapDone(t, isBest);
+          ghost.beginLap();
+        }
+        if (state.race && timing.lap > state.lapTarget) {
+          finishRace();
+        } else {
+          hud.showMsg(`LAP ${fmtTime(t)}${isBest ? '  ― ベストラップ!' : ''}`, 3000);
+        }
+      }
     }
 
     rig.update(physics, dt);
-    audio.update(physics, input.throttle);
+    audio.update(physics, state.phase === 'finished' ? 0 : input.throttle);
 
     // ---- auto-respawn: stopped off track -> 3 s countdown near the car ----
-    if (!physics.onTrack && physics.speed < 2.0) stuckTimer += dt;
+    if (state.phase === 'race' && !physics.onTrack && physics.speed < 2.0) stuckTimer += dt;
     else stuckTimer = 0;
     if (stuckTimer > 0) {
       const remain = RESPAWN_AFTER - stuckTimer;
@@ -315,6 +456,12 @@ function frame(now) {
   if (state.phase !== 'menu') {
     hud.update(physics, timing, assists,
       ghostPose, '#' + state.team.color.toString(16).padStart(6, '0'));
+    if (state.race && now - lastBoard > 250) {
+      lastBoard = now;
+      const standings = state.race.standings(
+        physics, timing.lap, state.driver.abbr, state.team);
+      hud.updateRace(standings, state.lapTarget, physics.speed);
+    }
   }
 
   renderer.render(scene, camera);
@@ -359,15 +506,27 @@ window.__sim = {
     physics.u = speed;
     rig.snapBehind(physics);
   },
-  // synchronous physics fast-forward with autopilot (no rendering)
+  // synchronous fast-forward with autopilot (no rendering); in race mode the
+  // AI field, standings and the finish are simulated too
   simulate: (seconds) => {
     const laps = [];
     for (let t = 0; t < seconds; t += FIXED) {
       const ctl = autopilotControl(physics);
       physics.step(FIXED, ctl, assists);
+      state.race?.step(FIXED, physics);
       timing.update(FIXED, physics.trackS());
-      if (timing.lapJustCompleted != null) laps.push(timing.lapJustCompleted);
+      if (timing.lapJustCompleted != null) {
+        laps.push(timing.lapJustCompleted);
+        if (state.race && timing.lap > state.lapTarget) { finishRace(); break; }
+      }
     }
-    return { laps, s: physics.trackS(), kmh: physics.speedKmh, onTrack: physics.onTrack };
+    return {
+      laps, s: physics.trackS(), kmh: physics.speedKmh, onTrack: physics.onTrack,
+      phase: state.phase,
+      standings: state.race
+        ? state.race.standings(physics, timing.lap, state.driver.abbr, state.team)
+          .map((r, i) => `P${i + 1} ${r.abbr}${r.isPlayer ? '*' : ''} lap${r.lap}`)
+        : null,
+    };
   },
 };
