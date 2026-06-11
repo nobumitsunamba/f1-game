@@ -258,6 +258,8 @@ function frame(now) {
 
   // car visuals
   if (carVis) {
+    // driver-eye mode hides the player's car body entirely
+    carVis.group.visible = rig.mode !== 3;
     carVis.group.position.set(physics.x, physics.y, physics.z);
     carVis.group.rotation.set(0, -physics.heading, 0);
     wheelSpinAcc += physics.u / CAR.wheelRadius * dt;

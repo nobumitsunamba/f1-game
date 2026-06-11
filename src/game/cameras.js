@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { SAMPLES, TOTAL_LENGTH } from '../track/suzuka.js';
 
-export const CAMERA_MODES = ['チェイス', 'コックピット', 'TV中継', 'ノーズ'];
+export const CAMERA_MODES = ['チェイス', 'コックピット', 'TV中継', 'ドライバー視点'];
 
 // trackside TV camera positions every ~350 m, offset from the racing line
 const TV_CAMS = [];
@@ -39,7 +39,7 @@ export class CameraRig {
     const jx = (Math.random() - 0.5) * this.shake, jy = (Math.random() - 0.5) * this.shake;
 
     let target, look, fovT;
-    if (this.mode === 1) {            // cockpit
+    if (this.mode === 1) {            // cockpit (driver eye, halo/wheels visible)
       target = carPos.clone()
         .addScaledVector(fwd, 0.42)
         .add(new THREE.Vector3(0, 1.02 - car.pitch * 0.4, 0));
@@ -47,7 +47,9 @@ export class CameraRig {
       fovT = 72 + speed * 0.10;
       this.camera.position.copy(target).add(new THREE.Vector3(jx, jy, 0));
       this.camera.lookAt(look);
-      this.camera.rotation.z = car.roll * 2 + car.r * -0.02;
+      // roll about the LOCAL view axis — assigning rotation.z after lookAt
+      // corrupts the euler decomposition and flips the view at some headings
+      this.camera.rotateZ(car.roll * 2 + car.r * -0.02);
     } else if (this.mode === 2) {     // TV
       let best = TV_CAMS[0], bd = Infinity;
       for (const c of TV_CAMS) {
@@ -57,13 +59,13 @@ export class CameraRig {
       this.camera.position.copy(best);
       this.camera.lookAt(carPos.x, carPos.y + 0.6, carPos.z);
       fovT = THREE.MathUtils.clamp(2600 / Math.sqrt(bd + 1), 9, 55);
-    } else if (this.mode === 3) {     // nose cam
-      target = carPos.clone().addScaledVector(fwd, 2.1).add(new THREE.Vector3(0, 0.45, 0));
-      look = carPos.clone().addScaledVector(fwd, 40).add(new THREE.Vector3(0, 0.4, 0));
+    } else if (this.mode === 3) {     // driver eye, car body hidden
+      target = carPos.clone().addScaledVector(fwd, 0.5).add(new THREE.Vector3(0, 1.0, 0));
+      look = carPos.clone().addScaledVector(fwd, 40).add(new THREE.Vector3(0, 0.75, 0));
       this.camera.position.copy(target).add(new THREE.Vector3(jx, jy, 0));
       this.camera.lookAt(look);
-      this.camera.rotation.z = car.roll * 1.5;
-      fovT = 80 + speed * 0.12;
+      this.camera.rotateZ(car.roll * 1.8 + car.r * -0.02);
+      fovT = 76 + speed * 0.11;
     } else {                          // chase
       const dist = 9.5 + speed * 0.045;
       const height = 3.0 + speed * 0.012;
