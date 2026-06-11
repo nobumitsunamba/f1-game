@@ -284,17 +284,21 @@ export class CarPhysics {
       const lim = q2.lateral > wallL ? wallL : -wallR;
       this.x = p.x + p.nrmX * lim + p.tanX * (q2.s - p.s);
       this.z = p.z + p.nrmZ * lim + p.tanZ * (q2.s - p.s);
-      // kill outward velocity, scrub speed
+      // kill outward velocity; tangential speed loses a one-off hit
+      // proportional to impact severity plus light per-substep rubbing —
+      // a continuous heavy scrub here pinned cars against the wall forever
       const wx = this.u * cosH - this.v * sinH, wz = this.u * sinH + this.v * cosH;
       const outSign = Math.sign(q2.lateral);
       const nDot = wx * p.nrmX * outSign + wz * p.nrmZ * outSign;
       let nwx = wx - Math.max(0, nDot) * p.nrmX * outSign;
       let nwz = wz - Math.max(0, nDot) * p.nrmZ * outSign;
-      nwx *= 0.72; nwz *= 0.72;
+      const impact = Math.max(0, nDot);
+      const keep = Math.max(0.55, 1 - impact * 0.03) * 0.998;
+      nwx *= keep; nwz *= keep;
       this.u = nwx * cosH + nwz * sinH;
       this.v = -nwx * sinH + nwz * cosH;
-      this.r *= 0.5;
-      this.wallHit = Math.min(1.5, Math.abs(nDot) * 0.05 + 0.3);
+      this.r *= 0.9;
+      this.wallHit = Math.min(1.5, impact * 0.05 + (impact > 0.5 ? 0.3 : 0.05));
     } else {
       this.wallHit = Math.max(0, this.wallHit - h * 2);
     }

@@ -6,7 +6,12 @@ import { autopilotControl } from './autopilot.js';
 import { TOTAL_LENGTH } from '../track/suzuka.js';
 
 const AI_ASSISTS = { tc: true, abs: true, stability: true, autoGear: true, autoX: true };
-const CAR_RADIUS = 1.7;            // collision circle
+// Collision body: two circles per car (front/rear), matching the real ~2 m
+// width — a single fat circle made cars "touch" while merely running
+// side-by-side on the grid, invisibly scrubbing speed at every pass.
+const COLL_R = 1.0;
+const COLL_OFF = 1.3;
+const GRID_GAP = 13;               // distance between grid slots (m)
 
 export class RaceManager {
   /**
@@ -37,7 +42,7 @@ export class RaceManager {
   placeGrid(playerPhysics) {
     this.cars.sort((a, b) => b.pace - a.pace);
     this.cars.forEach((c, i) => {
-      const slotS = TOTAL_LENGTH - 14 - i * 9;
+      const slotS = TOTAL_LENGTH - 14 - i * GRID_GAP;
       c.physics.reset(slotS, i % 2 === 0 ? 3.2 : -3.2);
       c.prevS = c.physics.trackS();
       c.lap = 0; c.progress = this.progressOf(c.physics, 0);
@@ -45,7 +50,8 @@ export class RaceManager {
       c.vis.group.rotation.set(0, -c.physics.heading, 0);
     });
     const playerSlot = this.cars.length;
-    playerPhysics.reset(TOTAL_LENGTH - 14 - playerSlot * 9, playerSlot % 2 === 0 ? 3.2 : -3.2);
+    playerPhysics.reset(TOTAL_LENGTH - 14 - playerSlot * GRID_GAP,
+      playerSlot % 2 === 0 ? 3.2 : -3.2);
     return playerSlot;
   }
 
@@ -99,23 +105,41 @@ export class RaceManager {
     this.resolveCollisions(playerPhysics);
   }
 
-  /** Simple circle push-apart between all cars (including the player). */
+  /** Car-to-car contact: two circles per car, push apart, and damp only the
+   *  closing velocity — side-by-side running and resting contact must not
+   *  bleed speed, and a stopped car must be able to drive away again. */
   resolveCollisions(playerPhysics) {
     const all = [...this.cars.map(c => c.physics), playerPhysics];
+    const dirs = all.map(p => [Math.cos(p.heading), Math.sin(p.heading)]);
     for (let i = 0; i < all.length; i++) {
+      const a = all[i], [axd, azd] = dirs[i];
       for (let j = i + 1; j < all.length; j++) {
-        const a = all[i], b = all[j];
-        const dx = b.x - a.x, dz = b.z - a.z;
-        const d = Math.hypot(dx, dz);
-        if (d > CAR_RADIUS * 2 || d < 1e-4) continue;
-        const push = (CAR_RADIUS * 2 - d) / 2;
-        const nx = dx / d, nz = dz / d;
-        a.x -= nx * push; a.z -= nz * push;
-        b.x += nx * push; b.z += nz * push;
-        // scrub a little speed off both cars
-        a.u *= 0.985; b.u *= 0.985;
-        a.wallHit = Math.max(a.wallHit, 0.25);
-        b.wallHit = Math.max(b.wallHit, 0.25);
+        const b = all[j], [bxd, bzd] = dirs[j];
+        const cdx = b.x - a.x, cdz = b.z - a.z;
+        if (cdx * cdx + cdz * cdz > 49) continue;          // > 7 m apart
+        for (const sa of [-COLL_OFF, COLL_OFF]) {
+          for (const sb of [-COLL_OFF, COLL_OFF]) {
+            const dx = (b.x + bxd * sb) - (a.x + axd * sa);
+            const dz = (b.z + bzd * sb) - (a.z + azd * sa);
+            const d = Math.hypot(dx, dz);
+            if (d > COLL_R * 2 || d < 1e-4) continue;
+            const nx = dx / d, nz = dz / d;
+            const push = (COLL_R * 2 - d) / 2 + 0.02;
+            a.x -= nx * push; a.z -= nz * push;
+            b.x += nx * push; b.z += nz * push;
+            // closing speed along the contact normal (fwd velocity only)
+            const vax = a.u * axd, vaz = a.u * azd;
+            const vbx = b.u * bxd, vbz = b.u * bzd;
+            const closing = (vbx - vax) * nx + (vbz - vaz) * nz;
+            if (closing < -0.2) {
+              const k = Math.min(0.06, -closing * 0.012);
+              if (vax * nx + vaz * nz > 0) a.u *= 1 - k;   // a drives into b
+              if (vbx * nx + vbz * nz < 0) b.u *= 1 - k;   // b drives into a
+              a.wallHit = Math.max(a.wallHit, 0.15);
+              b.wallHit = Math.max(b.wallHit, 0.15);
+            }
+          }
+        }
       }
     }
   }
