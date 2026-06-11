@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>F1 2026 鈴鹿サーキット — Racing Simulator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E🏎%3C/text%3E%3C/svg%3E">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000;
+    font-family: 'Hiragino Kaku Gothic ProN', 'Yu Gothic', 'Segoe UI', sans-serif; color: #fff; }
+  #app, canvas#gl { position: absolute; inset: 0; }
+
+  /* ---------- menu / driver select ---------- */
+  #menu { position: absolute; inset: 0; background:
+      radial-gradient(ellipse at 50% 30%, #16244e 0%, #060a18 70%);
+    display: flex; flex-direction: column; align-items: center; overflow-y: auto;
+    padding: 28px 16px 40px; z-index: 20; }
+  #menu h1 { font-size: 34px; letter-spacing: 2px; font-style: italic;
+    background: linear-gradient(90deg, #ff1801, #ffb199); -webkit-background-clip: text;
+    background-clip: text; color: transparent; }
+  #menu h2 { font-size: 15px; font-weight: normal; color: #9fb3d9; margin: 6px 0 22px; }
+  #teams { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    gap: 10px; width: min(1280px, 96vw); }
+  .team { border: 1px solid #2a3a5e; border-radius: 10px; padding: 10px 12px;
+    background: rgba(10,16,34,0.7); }
+  .team .tname { font-size: 13px; font-weight: bold; margin-bottom: 7px; display: flex; align-items: center; gap: 8px; }
+  .team .tname i { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+  .team .tname small { color: #8090b0; font-weight: normal; }
+  .drv { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    background: rgba(255,255,255,0.05); color: #fff; border: 1px solid transparent;
+    border-radius: 7px; padding: 7px 10px; margin: 4px 0; cursor: pointer; font-size: 14px; }
+  .drv:hover { background: rgba(255,255,255,0.14); }
+  .drv.sel { border-color: #ff1801; background: rgba(255,24,1,0.18); }
+  .drv .dnum { font-weight: bold; font-style: italic; width: 34px; font-size: 17px; }
+  .drv small { color: #8090b0; margin-left: auto; }
+  #start-race { margin-top: 24px; font-size: 20px; font-weight: bold; letter-spacing: 1px;
+    padding: 14px 64px; border: none; border-radius: 8px; cursor: pointer;
+    background: linear-gradient(180deg, #ff3b1d, #c81000); color: #fff; }
+  #start-race:disabled { background: #444; color: #999; cursor: default; }
+  #menu .controls-help { margin-top: 22px; color: #9fb3d9; font-size: 12.5px; line-height: 1.9;
+    background: rgba(0,0,0,0.35); border-radius: 8px; padding: 12px 20px; }
+  #menu .controls-help b { color: #fff; }
+
+  /* ---------- HUD ---------- */
+  #hud { position: absolute; inset: 0; pointer-events: none; z-index: 10; display: none; }
+  #hud-cluster { position: absolute; right: 26px; bottom: 22px; width: 300px;
+    background: rgba(8,10,18,0.72); border-radius: 12px; padding: 12px 16px;
+    border: 1px solid rgba(255,255,255,0.12); }
+  #hud-rpm-lights { display: flex; gap: 5px; justify-content: center; margin-bottom: 6px; }
+  .rpm-light { width: 16px; height: 16px; border-radius: 50%; background: #1c2030; }
+  .rpm-light.on-grn { background: #2bd96a; box-shadow: 0 0 7px #2bd96a; }
+  .rpm-light.on-org { background: #ffb300; box-shadow: 0 0 7px #ffb300; }
+  .rpm-light.on-red { background: #ff2222; box-shadow: 0 0 8px #ff2222; }
+  #hud-speed-row { display: flex; align-items: baseline; gap: 8px; }
+  #hud-speed { font-size: 52px; font-weight: bold; font-style: italic; min-width: 120px; text-align: right; }
+  #hud-speed-unit { color: #98a4c0; font-size: 13px; }
+  #hud-gear { margin-left: auto; font-size: 46px; font-weight: bold; color: #ffb300;
+    border: 2px solid #39405c; border-radius: 9px; width: 58px; text-align: center; }
+  #hud-rpm-bar { height: 7px; background: #1c2030; border-radius: 4px; margin-top: 8px; overflow: hidden; }
+  #hud-rpm-fill { height: 100%; width: 0; }
+  #hud-ers-row { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+  .hud-tag { font-size: 11px; font-weight: bold; padding: 2px 7px; border-radius: 4px;
+    background: #1c2030; color: #5a6480; }
+  .hud-tag.active { background: #00c2ff; color: #002; box-shadow: 0 0 8px #00c2ff; }
+  #hud-boost.active { background: #ffe14d; box-shadow: 0 0 8px #ffe14d; }
+  #hud-ers-bar { flex: 1; height: 7px; background: #1c2030; border-radius: 4px; overflow: hidden; }
+  #hud-ers-fill { height: 100%; background: #ffe14d; }
+
+  #hud-timing { position: absolute; left: 26px; top: 22px; width: 210px;
+    background: rgba(8,10,18,0.72); border-radius: 12px; padding: 12px 16px;
+    border: 1px solid rgba(255,255,255,0.12); font-size: 14px; }
+  #hud-driver { font-weight: bold; font-size: 16px; margin-bottom: 8px; }
+  #hud-driver .num { border-left: 4px solid; padding-left: 6px; font-style: italic; }
+  #hud-driver small { color: #98a4c0; font-size: 11px; display: block; }
+  .t-row { display: flex; justify-content: space-between; margin: 2px 0; }
+  .t-row span { color: #98a4c0; font-size: 12px; }
+  .t-row b { font-variant-numeric: tabular-nums; }
+  #hud-sectors { display: flex; gap: 6px; margin-top: 7px; }
+  .sec { flex: 1; text-align: center; font-size: 11px; padding: 2px 0; border-radius: 4px;
+    background: #1c2030; color: #5a6480; }
+  .sec.cur { background: #3a72d8; color: #fff; }
+  .sec.done { background: #2bd96a; color: #013; }
+
+  #hud-map { position: absolute; right: 26px; top: 22px;
+    background: rgba(8,10,18,0.55); border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); }
+  #hud-corner { position: absolute; top: 24px; left: 50%; transform: translateX(-50%);
+    font-size: 19px; font-weight: bold; background: rgba(8,10,18,0.72);
+    padding: 8px 22px; border-radius: 20px; opacity: 0; transition: opacity 0.25s;
+    border: 1px solid rgba(255,255,255,0.15); }
+  #hud-assists { position: absolute; left: 26px; bottom: 22px; display: flex; gap: 6px; }
+  #hud-assists span { font-size: 11px; font-weight: bold; padding: 3px 8px; border-radius: 4px;
+    background: rgba(8,10,18,0.72); color: #5a6480; border: 1px solid rgba(255,255,255,0.1); }
+  #hud-assists span.on { color: #2bd96a; border-color: #2bd96a44; }
+  #hud-msg { position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
+    font-size: 26px; font-weight: bold; font-style: italic; opacity: 0; transition: opacity 0.4s;
+    text-shadow: 0 2px 12px #000; white-space: nowrap; }
+  #hud-offtrack { position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
+    color: #ffb300; font-size: 15px; opacity: 0; transition: opacity 0.3s; }
+
+  /* ---------- start lights overlay ---------- */
+  #lights { position: absolute; top: 12vh; left: 50%; transform: translateX(-50%);
+    display: none; gap: 14px; z-index: 15; }
+  #lights .col { width: 54px; background: #111; border-radius: 10px; padding: 9px;
+    display: flex; flex-direction: column; gap: 9px; border: 2px solid #333; }
+  #lights .bulb { width: 36px; height: 36px; border-radius: 50%; background: #2a0000; }
+  #lights .col.on .bulb { background: #ff1801; box-shadow: 0 0 18px #ff1801; }
+
+  #fade { position: absolute; inset: 0; background: #000; opacity: 1;
+    transition: opacity 0.6s; pointer-events: none; z-index: 30; }
+</style>
+</head>
+<body>
+  <div id="app">
+    <canvas id="gl"></canvas>
+    <div id="hud"></div>
+    <div id="lights"></div>
+    <div id="menu"></div>
+    <div id="fade"></div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
