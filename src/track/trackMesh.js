@@ -399,7 +399,9 @@ function buildGantry() {
   const group = new THREE.Group();
   const p = SAMPLES[2];
   const steel = new THREE.MeshStandardMaterial({ color: 0x333a44, roughness: 0.5, metalness: 0.7 });
-  const w = p.wL + p.wR + 6;
+  // legs clear the kerbs by a good margin on both sides
+  const legOff = Math.max(p.wL, p.wR) + 4.5;
+  const w = legOff * 2 + 2;
   const beam = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.6, w), steel);
   const ang = -Math.atan2(p.tanZ, p.tanX);
   beam.rotation.y = ang;
@@ -409,7 +411,7 @@ function buildGantry() {
   group.add(beam);
   for (const side of [1, -1]) {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(1.0, 7.5, 1.0), steel);
-    leg.position.set(p.x + p.nrmX * side * (w / 2 - 1), p.y + 3.75, p.z + p.nrmZ * side * (w / 2 - 1));
+    leg.position.set(cx + p.nrmX * side * legOff, p.y + 3.75, cz + p.nrmZ * side * legOff);
     group.add(leg);
   }
   // panel faces the approaching cars (normal opposing travel direction)
@@ -466,14 +468,14 @@ function buildGrandstand(s, lateral, len = 120) {
 
   const crowdTex = canvasTexture(512, 128, (ctx, w, h) => {
     ctx.fillStyle = '#8a93a6'; ctx.fillRect(0, 0, w, h);
-    for (let i = 0; i < 5200; i++) {
-      ctx.fillStyle = `hsl(${Math.random() * 360},55%,${48 + Math.random() * 30}%)`;
-      ctx.fillRect(Math.random() * w, Math.random() * h, 3, 3);
+    for (let i = 0; i < 1600; i++) {
+      ctx.fillStyle = `hsl(${Math.random() * 360},45%,${48 + Math.random() * 26}%)`;
+      ctx.fillRect(Math.random() * w, Math.random() * h, 6, 7);
     }
     // aisle stripes
     ctx.fillStyle = '#777f90';
-    for (let x = 0; x < w; x += 64) ctx.fillRect(x, 0, 5, h);
-  }, [Math.max(1, len / 40), 1]);
+    for (let x = 0; x < w; x += 64) ctx.fillRect(x, 0, 8, h);
+  }, [Math.max(1, len / 80), 1]);
 
   const local = new THREE.Group();
   // tilted seating slab, low edge towards the track
@@ -534,36 +536,60 @@ function buildFerrisWheel() {
 }
 
 function buildPitBuilding() {
+  // The pit straight in the real data curves gently, so one long box drifts
+  // onto the road. Build the complex as short segments that each follow the
+  // local road tangent at a constant lateral offset, and verify every corner
+  // against the WHOLE circuit (the previous check excluded the own straight,
+  // which is exactly where a drifting box ends up).
   const group = new THREE.Group();
-  const p = sampleAt(TOTAL_LENGTH - 150);
-  const len = 260;
-  const bldg = new THREE.Mesh(new THREE.BoxGeometry(len, 12, 22),
-    new THREE.MeshStandardMaterial({ color: 0xcfd4da, roughness: 0.7 }));
-  const ang = -Math.atan2(p.tanZ, p.tanX);
-  bldg.rotation.y = ang;
-  // right of the start/finish straight, leaving room for a pit lane; pushed
-  // out until all four corners clear the rest of the circuit
-  let lateral = -(p.wR + 38);
-  for (let guard = 0; guard < 8; guard++) {
-    let ok = true;
-    for (const f of [-len / 2, len / 2]) {
-      for (const d of [11, -11]) {
-        const cx = p.x + p.nrmX * (lateral + d) + p.tanX * (40 + f);
-        const cz = p.z + p.nrmZ * (lateral + d) + p.tanZ * (40 + f);
-        const ownS = (TOTAL_LENGTH - 150 + 40 + f + TOTAL_LENGTH) % TOTAL_LENGTH;
-        if (clearanceFromOtherSections(cx, cz, ownS, 250) < 18) { ok = false; break; }
+  const garageTex = canvasTexture(512, 96, (ctx, w, h) => {
+    ctx.fillStyle = '#cfd4da'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#3a4450';
+    for (let x = 8; x < w - 8; x += 64) ctx.fillRect(x, h * 0.45, 48, h * 0.5); // garage doors
+    ctx.fillStyle = '#9fb6c8';
+    ctx.fillRect(0, 6, w, h * 0.2);                                            // glass band
+  }, [3, 1]);
+  const faceMat = new THREE.MeshStandardMaterial({ map: garageTex, roughness: 0.7 });
+  const plainMat = new THREE.MeshStandardMaterial({ color: 0xcfd4da, roughness: 0.7 });
+
+  const segLen = 62, depth = 20, height = 9;
+  for (let k = -2; k <= 2; k++) {
+    const segS = TOTAL_LENGTH - 160 + k * segLen;
+    const p = sampleAt(segS);
+    let lateral = -(p.wR + 24);   // front face ~13 m off the road edge (pit lane)
+    // push out until all 4 plan corners clear every part of the circuit
+    for (let guard = 0; guard < 10; guard++) {
+      let ok = true;
+      for (const f of [-segLen / 2, segLen / 2]) {
+        for (const d of [depth / 2, -depth / 2]) {
+          const cx = p.x + p.nrmX * (lateral + d) + p.tanX * f;
+          const cz = p.z + p.nrmZ * (lateral + d) + p.tanZ * f;
+          let best = Infinity, bq = null;
+          for (const q of SAMPLES) {
+            const dd = (q.x - cx) ** 2 + (q.z - cz) ** 2;
+            if (dd < best) { best = dd; bq = q; }
+          }
+          if (Math.sqrt(best) < Math.max(bq.wL, bq.wR) + 12) { ok = false; break; }
+        }
+        if (!ok) break;
       }
-      if (!ok) break;
+      if (ok) break;
+      lateral -= 4;
     }
-    if (ok) break;
-    lateral -= 8;
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(segLen + 0.8, height, depth),
+      [plainMat, plainMat, plainMat, plainMat, faceMat, faceMat]);
+    seg.rotation.y = -Math.atan2(p.tanZ, p.tanX);
+    seg.position.set(p.x + p.nrmX * lateral, p.y + height / 2, p.z + p.nrmZ * lateral);
+    group.add(seg);
+    if (k === 0) {
+      const sign = billboardText('SUZUKA CIRCUIT', 50, 4.5, { bg: '#13294b' });
+      sign.rotation.y = Math.PI - Math.atan2(p.tanZ, p.tanX); // face the track
+      sign.position.set(
+        p.x + p.nrmX * (lateral + depth / 2 + 0.3), p.y + height + 2.5,
+        p.z + p.nrmZ * (lateral + depth / 2 + 0.3));
+      group.add(sign);
+    }
   }
-  bldg.position.set(p.x + p.nrmX * lateral + p.tanX * 40, p.y + 6, p.z + p.nrmZ * lateral + p.tanZ * 40);
-  group.add(bldg);
-  const sign = billboardText('SUZUKA CIRCUIT', 60, 5, { bg: '#13294b' });
-  sign.rotation.y = Math.PI - Math.atan2(p.tanZ, p.tanX); // face the track
-  sign.position.set(bldg.position.x + p.nrmX * 11.5, p.y + 13.5, bldg.position.z + p.nrmZ * 11.5);
-  group.add(sign);
   return group;
 }
 
