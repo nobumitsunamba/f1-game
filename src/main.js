@@ -504,6 +504,7 @@ window.__sim = {
   teleport: (s, speed = 40) => {
     physics.reset(s, 0);
     physics.u = speed;
+    timing.prevS = physics.trackS();  // don't count the jump as a line crossing
     rig.snapBehind(physics);
   },
   // synchronous fast-forward with autopilot (no rendering); in race mode the

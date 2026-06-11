@@ -107,6 +107,7 @@ export class Hud {
    * playerSpeed (m/s) converts distance gaps to rough time gaps.
    */
   updateRace(standings, lapTarget, playerSpeed) {
+    this.raceMode = true;       // update() leaves the LAP line to us
     const posRow = this.q('hud-pos-row');
     posRow.style.display = 'flex';
     const meIdx = standings.findIndex(r => r.isPlayer);
@@ -131,6 +132,7 @@ export class Hud {
   }
 
   hideRace() {
+    this.raceMode = false;
     this.q('hud-pos-row').style.display = 'none';
     this.q('hud-board').style.display = 'none';
   }
@@ -174,7 +176,7 @@ export class Hud {
     this.q('hud-boost').classList.toggle('active', car.ers > 0 && !!car._boosting);
     this.q('hud-ers-fill').style.width = (car.ers / CAR.ersCapacity * 100) + '%';
 
-    this.q('hud-lap').textContent = Math.max(0, timing.lap);
+    if (!this.raceMode) this.q('hud-lap').textContent = Math.max(0, timing.lap);
     this.q('hud-time').textContent = fmtTime(timing.lapTime);
     this.q('hud-last').textContent = fmtTime(timing.lastLap);
     this.q('hud-best').textContent = fmtTime(timing.bestLap ?? timing.allTimeBest);

@@ -50,10 +50,10 @@ export class RaceManager {
   }
 
   progressOf(physics, lap) {
-    let s = physics.trackS();
-    // grid positions before the line count as negative progress on lap 0
-    if (lap === 0 && s > TOTAL_LENGTH - 200) s -= TOTAL_LENGTH;
-    return lap * TOTAL_LENGTH + s;
+    // lap counts line crossings (0 on the grid, 1 right after the start),
+    // so continuous race distance is (lap-1) laps plus the current s —
+    // the grid stretch before the line comes out negative as it should.
+    return (lap - 1) * TOTAL_LENGTH + physics.trackS();
   }
 
   start() { this.started = true; }
