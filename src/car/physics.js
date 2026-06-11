@@ -43,10 +43,15 @@ export const CAR = {
 
 const SLIP_PEAK = 0.105;     // rad slip angle at peak lateral force
 
-function tireForceCurve(slipRatio) {
-  // normalized Pacejka-like: peaks at 1.0 around slipRatio=1, gentle falloff
-  const B = 1.45, C = 1.45;
-  return Math.sin(C * Math.atan(B * slipRatio));
+// Normalized lateral force vs slip. Shape constant C controls post-peak
+// falloff: the front falls off harder than the rear so the limit behavior
+// is stabilizing understeer instead of an unconditional spin.
+const CURVE_B = 1.45;
+const CURVE_C_FRONT = 1.60;
+const CURVE_C_REAR = 1.22;
+
+function tireForceCurve(slipRatio, C = CURVE_C_REAR) {
+  return Math.sin(C * Math.atan(CURVE_B * slipRatio));
 }
 
 export class CarPhysics {
@@ -144,13 +149,21 @@ export class CarPhysics {
     // ---- steering with speed-sensitive lock ----
     // input.steer is "+ = left"; internal convention is "+ = right"
     // (heading increases clockwise seen from above), hence the negation.
-    const lockBlend = Math.min(1, this.speed / 95);
+    const lockBlend = Math.min(1, this.speed / 75);
     const lock = c.steerLockLow + (c.steerLockHigh - c.steerLockLow) * lockBlend;
     const steerTarget = -input.steer * lock;
     // driver-arm rate limit keeps keyboard input controllable
     const steerRate = 4.2 * lock;
     const dS = steerTarget - this.steerAngle;
     this.steerAngle += Math.sign(dS) * Math.min(Math.abs(dS), steerRate * h * 60 * 0.06);
+    // steering assist (part of stability): clamp the road-wheel angle so the
+    // front slip angle stays near its grip peak — a saturated front otherwise
+    // keeps yawing the car until the rear lets go (instant spin on keyboard)
+    if (assists.stability && this.u > 8) {
+      const flow = Math.atan2(this.v + c.cgToFront * this.r, this.u);
+      const lim = 1.25 * SLIP_PEAK;
+      this.steerAngle = Math.max(flow - lim, Math.min(flow + lim, this.steerAngle));
+    }
 
     // ---- axle loads (static + aero + longitudinal transfer) ----
     const m = c.mass;
@@ -160,7 +173,8 @@ export class CarPhysics {
     let fzF = Math.max(200, wStaticF + downforce * c.aeroBalanceFront - transfer);
     let fzR = Math.max(200, wStaticR + downforce * (1 - c.aeroBalanceFront) + transfer);
 
-    const muF = grip * c.muTire * Math.pow(wStaticF / fzF, c.loadSensitivity);
+    // front fractionally weaker than the rear: mild limit understeer
+    const muF = 0.965 * grip * c.muTire * Math.pow(wStaticF / fzF, c.loadSensitivity);
     const muR = grip * c.muTire * Math.pow(wStaticR / fzR, c.loadSensitivity);
 
     // ---- longitudinal forces ----
@@ -170,12 +184,14 @@ export class CarPhysics {
     if (input.boost && this.ers > 0) power += c.powerBoost;
     let throttle = input.throttle;
     let driveForce = throttle * power / Math.max(8, this.u);
-    // traction control
+    // traction control: friction-circle budget + hard cut on rear slip
     const rearCap = muR * fzR;
     if (assists.tc) {
       const latDemandR = Math.abs(this.slipRear) / SLIP_PEAK;
       const longBudget = rearCap * Math.sqrt(Math.max(0.06, 1 - Math.min(1, latDemandR) ** 2 * 0.88));
       driveForce = Math.min(driveForce, longBudget);
+      const over = (Math.abs(this.slipRear) - 1.2 * SLIP_PEAK) / SLIP_PEAK;
+      if (over > 0) driveForce *= Math.max(0, 1 - over * 1.5);
     }
     this.throttleOut = throttle;
 
@@ -216,24 +232,30 @@ export class CarPhysics {
     const latCapF = Math.sqrt(Math.max(0.02, 1 - Math.min(1, Math.abs(fxF) / (muF * fzF)) ** 2));
     const latCapR = Math.sqrt(Math.max(0.02, 1 - Math.min(1, Math.abs(fxR) / (muR * fzR)) ** 2));
 
-    let fyF = -muF * fzF * latCapF * tireForceCurve(alphaF / SLIP_PEAK);
-    let fyR = -muR * fzR * latCapR * tireForceCurve(alphaR / SLIP_PEAK);
+    let fyF = -muF * fzF * latCapF * tireForceCurve(alphaF / SLIP_PEAK, CURVE_C_FRONT);
+    let fyR = -muR * fzR * latCapR * tireForceCurve(alphaR / SLIP_PEAK, CURVE_C_REAR);
 
     // locked wheels slide: steering (front) / stability (rear) collapse
     if (this.lockF) fyF *= 0.25;
     if (this.lockR) fyR *= 0.25;
 
-    // stability assist: gentle yaw damping (electronic differential feel)
-    if (assists.stability) {
-      fyR += -this.r * 1500 * Math.min(1, this.speed / 30);
-    }
-
     // ---- equations of motion (body frame) ----
     const fLong = fxR + fxF * Math.cos(this.steerAngle) - fyF * Math.sin(this.steerAngle)
       - m * G * this.grade;                     // gravity along slope
     const fLat = fyR + fyF * Math.cos(this.steerAngle) + fxF * Math.sin(this.steerAngle);
-    const yawM = c.cgToFront * (fyF * Math.cos(this.steerAngle) + fxF * Math.sin(this.steerAngle))
+    let yawM = c.cgToFront * (fyF * Math.cos(this.steerAngle) + fxF * Math.sin(this.steerAngle))
       - c.cgToRear * fyR;
+
+    // stability assist (ESC): corrective yaw moment towards the yaw rate the
+    // driver is asking for, capped by available grip — catches the rear
+    // stepping out instead of merely damping rotation
+    if (assists.stability && this.u > 6) {
+      const ayMax = (muF * fzF + muR * fzR) / m;
+      let rDes = this.u * this.steerAngle / (c.wheelbase + 0.0030 * this.u * this.u);
+      const rCap = 1.15 * ayMax / this.u;
+      rDes = Math.max(-rCap, Math.min(rCap, rDes));
+      yawM += 6500 * (rDes - this.r);
+    }
 
     this.aLong = fLong / m;
     this.aLat = fLat / m;
