@@ -142,10 +142,10 @@ function buildStartLine() {
   line.position.set(cx, p.y + 0.04, cz);
   group.add(line);
 
-  // grid slots behind the line
+  // grid slots behind the line (spacing matches race.js GRID_GAP)
   const slotMat = new THREE.MeshBasicMaterial({ color: 0xeeeeee });
-  for (let i = 0; i < 10; i++) {
-    const sp = sampleAt(TOTAL_LENGTH - 14 - i * 9);
+  for (let i = 0; i < 22; i++) {
+    const sp = sampleAt(TOTAL_LENGTH - 14 - i * 13);
     const lat = (i % 2 === 0 ? 3.2 : -3.2);
     const slot = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 0.18), slotMat);
     slot.rotation.x = -Math.PI / 2;

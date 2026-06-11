@@ -500,7 +500,7 @@ requestAnimationFrame(() => { document.getElementById('fade').style.opacity = 0;
 
 // debug handle (used by automated verification; harmless in production)
 window.__sim = {
-  physics, rig, timing, autopilot: false,
+  physics, rig, timing, state, autopilot: false,
   teleport: (s, speed = 40) => {
     physics.reset(s, 0);
     physics.u = speed;
