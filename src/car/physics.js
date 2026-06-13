@@ -202,21 +202,20 @@ export class CarPhysics {
     const capF = muF * fzF, capR = muR * fzR;
     let lockF = false, lockR = false;
     if (assists.abs) {
-      // ABS does more than stop wheels locking: when the driver asks for front
-      // grip to turn, it holds back front brake force so part of the front
-      // friction circle stays available for cornering. Without this the front
-      // axle spends nearly all its grip slowing the car and washes straight on
-      // under braking, even though steering on throttle (rear-driven) is fine.
-      // The budget must cover the WHOLE front longitudinal load — brake plus the
-      // front share of aero/rolling drag (dragN*0.5, see fxF below). Reserving
-      // only against the brake let drag re-saturate the front at speed, so the
-      // car kept sliding straight under trail braking.
+      // ABS + EBD with a cornering reserve. Each axle may use at most `util` of
+      // its grip circle for slowing down (brake + that axle's share of drag),
+      // so the rest stays available as lateral grip to actually turn the car.
+      // Steering lowers `util` so braking can't strip the grip the car needs to
+      // corner. The REAR gets the bigger cut: braking transfers load off it, and
+      // a saturated rear lets the tail slide — the car then spins on the spot
+      // while its path keeps going straight ("slides forward, won't turn").
+      // With no steering both caps fall back to plain ABS lock prevention.
       const steerDemand = Math.min(1, Math.abs(input.steer));
-      const latReserveF = 0.72 * steerDemand;
-      const frontLongBudget = capF * Math.sqrt(Math.max(0.04, 1 - latReserveF * latReserveF));
-      const dragFront = dragN * 0.5;
-      brakeF = Math.min(brakeF, Math.max(0, frontLongBudget - dragFront), capF * 0.96);
-      brakeR = Math.min(brakeR, capR * 0.94);
+      const utilF = 0.96 - 0.32 * steerDemand;
+      const utilR = 0.94 - 0.60 * steerDemand;
+      const dragAxle = dragN * 0.5;          // front/rear share of drag (see fxF/fxR)
+      brakeF = Math.min(brakeF, Math.max(0, capF * utilF - dragAxle));
+      brakeR = Math.min(brakeR, Math.max(0, capR * utilR - dragAxle));
     } else {
       if (brakeF > capF) { lockF = true; brakeF = capF * 0.78; }
       if (brakeR > capR) { lockR = true; brakeR = capR * 0.78; }
