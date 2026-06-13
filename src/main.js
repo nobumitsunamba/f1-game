@@ -106,70 +106,49 @@ const menuEl = document.getElementById('menu');
 function buildMenu() {
   menuEl.innerHTML = `
     <h1>F1 2026 RACING SIMULATOR</h1>
-    <h2>${TRACK_NAME} — 全長 ${(TOTAL_LENGTH / 1000).toFixed(3)} km ｜ ドライバーを選択してください</h2>
+    <h2>${TRACK_NAME} — 全長 ${(TOTAL_LENGTH / 1000).toFixed(3)} km ｜
+      ドライバーをクリック=自分 ／ <b style="color:#00c2ff">VS</b>=対戦相手(複数可、0台ならタイムアタック)</h2>
     <div id="teams"></div>
-    <div id="race-setup">
-      <h3>AI対戦</h3>
-      <div class="hint">対戦したい相手を選んでください(0台ならタイムアタック)。あなたは最後尾グリッドからスタートします。</div>
-      <div id="opp-chips"></div>
-      <div class="opt-row">
-        <span class="lbl"></span>
-        <button class="opt-btn" id="opp-all">全選択</button>
-        <button class="opt-btn" id="opp-none">クリア</button>
-      </div>
-      <div class="opt-row"><span class="lbl">周回数</span>
-        <button class="opt-btn lap-btn" data-laps="1">1</button>
-        <button class="opt-btn lap-btn sel" data-laps="3">3</button>
-        <button class="opt-btn lap-btn" data-laps="5">5</button>
-      </div>
-      <div class="opt-row"><span class="lbl">AIの速さ</span>
-        <button class="opt-btn diff-btn" data-diff="0.88">易しい</button>
-        <button class="opt-btn diff-btn sel" data-diff="0.96">普通</button>
-        <button class="opt-btn diff-btn" data-diff="1.04">速い</button>
-      </div>
+    <div id="race-opts">
+      <span class="lbl">対戦相手</span>
+      <button class="opt-btn" id="opp-all">全選択</button>
+      <button class="opt-btn" id="opp-none">クリア</button>
+      <span class="lbl">周回数</span>
+      <button class="opt-btn lap-btn" data-laps="1">1</button>
+      <button class="opt-btn lap-btn sel" data-laps="3">3</button>
+      <button class="opt-btn lap-btn" data-laps="5">5</button>
+      <span class="lbl">AIの速さ</span>
+      <button class="opt-btn diff-btn" data-diff="0.88">易しい</button>
+      <button class="opt-btn diff-btn sel" data-diff="0.96">普通</button>
+      <button class="opt-btn diff-btn" data-diff="1.04">速い</button>
     </div>
     <button id="start-race" disabled>SELECT DRIVER</button>
     <div class="controls-help">
-      <b>操作:</b> ↑/W アクセル ｜ ↓/S ブレーキ ｜ ←→/A D ステアリング ｜ Space オーバーテイクブースト(ERS)<br>
-      X アクティブエアロ(Xモード) ｜ E/Q または Shift/Ctrl ギア ｜ C カメラ切替 ｜ R リスポーン ｜ M ミュート<br>
+      <b>キーボード:</b> ↑/W アクセル ｜ ↓/S ブレーキ ｜ ←→/A D ステアリング ｜ Space ERSブースト ｜
+      X エアロXモード ｜ E/Q ギア ｜ C カメラ ｜ R リスポーン ｜ M ミュート<br>
+      <b>マウス:</b> 左ボタン長押し アクセル ｜ 右ボタン長押し ブレーキ ｜ 左右移動 ハンドル(画面中央=直進、クリックで有効化)<br>
       <b>アシスト切替:</b> F1 トラクション ｜ F2 ABS ｜ F3 スタビリティ ｜ F4 オートシフト ｜ F5 自動エアロ ｜ ゲームパッド対応
     </div>`;
   const teamsEl = menuEl.querySelector('#teams');
   const startBtn = menuEl.querySelector('#start-race');
-  const setupEl = menuEl.querySelector('#race-setup');
-  const chipsEl = menuEl.querySelector('#opp-chips');
   let selected = null;
   const opponents = new Set();   // keys "teamId:driverIndex"
   let lapTarget = 3, difficulty = 0.96;
+  const rows = new Map();        // key -> row element
 
   const keyOf = (team, di) => `${team.id}:${di}`;
 
-  const refreshStart = () => {
-    if (!selected) return;
+  const refresh = () => {
+    for (const [key, row] of rows) {
+      row.classList.toggle('opp', opponents.has(key));
+      row.classList.toggle('sel',
+        !!selected && key === keyOf(selected.team, selected.di));
+    }
+    if (!selected) { startBtn.disabled = true; startBtn.textContent = 'ドライバーを選択してください'; return; }
     startBtn.disabled = false;
     startBtn.textContent = opponents.size
       ? `${selected.drv.abbr} で ${opponents.size} 台とレース開始(${lapTarget}周)`
       : `${selected.drv.abbr} でタイムアタック開始`;
-  };
-
-  const renderChips = () => {
-    chipsEl.innerHTML = '';
-    for (const team of TEAMS) {
-      const c = '#' + team.color.toString(16).padStart(6, '0');
-      team.drivers.forEach((drv, di) => {
-        if (selected && selected.team.id === team.id && selected.di === di) return;
-        const key = keyOf(team, di);
-        const chip = document.createElement('button');
-        chip.className = 'opp-chip' + (opponents.has(key) ? ' sel' : '');
-        chip.innerHTML = `<i style="background:${c}"></i>${drv.abbr} ${drv.name}`;
-        chip.onclick = () => {
-          opponents.has(key) ? opponents.delete(key) : opponents.add(key);
-          chip.classList.toggle('sel');
-          refreshStart();
-        };
-        chipsEl.appendChild(chip);
-      });
-    }
   };
 
   for (const team of TEAMS) {
@@ -178,38 +157,43 @@ function buildMenu() {
     div.className = 'team';
     div.innerHTML = `<div class="tname"><i style="background:${c}"></i>${team.name} <small>${team.fullName} ・ ${team.pu}</small></div>`;
     team.drivers.forEach((drv, di) => {
-      const btn = document.createElement('button');
-      btn.className = 'drv';
-      btn.innerHTML = `<span class="dnum" style="color:${c}">${drv.num}</span> ${drv.name} <small>${drv.abbr}</small>`;
-      btn.onclick = () => {
-        menuEl.querySelectorAll('.drv.sel').forEach(b => b.classList.remove('sel'));
-        btn.classList.add('sel');
+      const key = keyOf(team, di);
+      const row = document.createElement('button');
+      row.className = 'drv';
+      row.innerHTML = `<span class="dnum" style="color:${c}">${drv.num}</span> ${drv.name}` +
+        `<span class="me-tag">自分</span><small>${drv.abbr}</small><span class="vs">VS</span>`;
+      // row click = play as this driver; VS = toggle as opponent
+      row.onclick = () => {
         selected = { team, drv, di };
-        opponents.delete(keyOf(team, di));   // can't race yourself
-        setupEl.style.display = 'block';
-        renderChips();
-        refreshStart();
+        opponents.delete(key);     // can't race yourself
+        refresh();
       };
-      div.appendChild(btn);
+      row.querySelector('.vs').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (selected && key === keyOf(selected.team, selected.di)) return;
+        opponents.has(key) ? opponents.delete(key) : opponents.add(key);
+        refresh();
+      });
+      rows.set(key, row);
+      div.appendChild(row);
     });
     teamsEl.appendChild(div);
   }
 
   menuEl.querySelector('#opp-all').onclick = () => {
     for (const team of TEAMS) team.drivers.forEach((drv, di) => {
-      if (selected && selected.team.id === team.id && selected.di === di) return;
-      opponents.add(keyOf(team, di));
+      const key = keyOf(team, di);
+      if (selected && key === keyOf(selected.team, selected.di)) return;
+      opponents.add(key);
     });
-    renderChips(); refreshStart();
+    refresh();
   };
-  menuEl.querySelector('#opp-none').onclick = () => {
-    opponents.clear(); renderChips(); refreshStart();
-  };
+  menuEl.querySelector('#opp-none').onclick = () => { opponents.clear(); refresh(); };
   menuEl.querySelectorAll('.lap-btn').forEach(b => b.onclick = () => {
     menuEl.querySelectorAll('.lap-btn').forEach(x => x.classList.remove('sel'));
     b.classList.add('sel');
     lapTarget = Number(b.dataset.laps);
-    refreshStart();
+    refresh();
   });
   menuEl.querySelectorAll('.diff-btn').forEach(b => b.onclick = () => {
     menuEl.querySelectorAll('.diff-btn').forEach(x => x.classList.remove('sel'));
@@ -225,6 +209,7 @@ function buildMenu() {
     });
     startRace(selected.team, selected.drv, { entries, lapTarget, difficulty });
   };
+  refresh();
 }
 buildMenu();
 
@@ -469,6 +454,14 @@ function frame(now) {
 }
 
 function handleGlobalKeys() {
+  if (input.mouseModeChanged) {
+    input.mouseModeChanged = false;
+    if (state.phase !== 'menu') {
+      hud.showMsg(input.mouseMode
+        ? 'マウス操作: 左=アクセル / 右=ブレーキ / 左右移動=ハンドル'
+        : 'キーボード操作に戻りました', 2200);
+    }
+  }
   if (input.pressed('KeyC')) {
     rig.cycle();
     hud.showMsg(`カメラ: ${CAMERA_MODES[rig.mode]}`, 1200);

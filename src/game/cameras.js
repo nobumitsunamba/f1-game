@@ -42,14 +42,12 @@ export class CameraRig {
     if (this.mode === 1) {            // cockpit (driver eye, halo/wheels visible)
       target = carPos.clone()
         .addScaledVector(fwd, 0.42)
-        .add(new THREE.Vector3(0, 1.02 - car.pitch * 0.4, 0));
-      look = carPos.clone().addScaledVector(fwd, 30).add(new THREE.Vector3(0, 0.7, 0));
+        .add(new THREE.Vector3(0, 0.94, 0));
+      look = carPos.clone().addScaledVector(fwd, 30).add(new THREE.Vector3(0, 0.55, 0));
       fovT = 72 + speed * 0.10;
       this.camera.position.copy(target).add(new THREE.Vector3(jx, jy, 0));
       this.camera.lookAt(look);
-      // roll about the LOCAL view axis — assigning rotation.z after lookAt
-      // corrupts the euler decomposition and flips the view at some headings
-      this.camera.rotateZ(car.roll * 2 + car.r * -0.02);
+      // horizon stays level: no camera roll, the car sits planted on the road
     } else if (this.mode === 2) {     // TV
       let best = TV_CAMS[0], bd = Infinity;
       for (const c of TV_CAMS) {
@@ -60,11 +58,11 @@ export class CameraRig {
       this.camera.lookAt(carPos.x, carPos.y + 0.6, carPos.z);
       fovT = THREE.MathUtils.clamp(2600 / Math.sqrt(bd + 1), 9, 55);
     } else if (this.mode === 3) {     // driver eye, car body hidden
-      target = carPos.clone().addScaledVector(fwd, 0.5).add(new THREE.Vector3(0, 1.0, 0));
-      look = carPos.clone().addScaledVector(fwd, 40).add(new THREE.Vector3(0, 0.75, 0));
+      target = carPos.clone().addScaledVector(fwd, 0.5).add(new THREE.Vector3(0, 0.96, 0));
+      look = carPos.clone().addScaledVector(fwd, 40).add(new THREE.Vector3(0, 0.6, 0));
       this.camera.position.copy(target).add(new THREE.Vector3(jx, jy, 0));
       this.camera.lookAt(look);
-      this.camera.rotateZ(car.roll * 1.8 + car.r * -0.02);
+      // horizon stays level here too
       fovT = 76 + speed * 0.11;
     } else {                          // chase
       const dist = 9.5 + speed * 0.045;
