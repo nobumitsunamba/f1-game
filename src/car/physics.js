@@ -202,16 +202,26 @@ export class CarPhysics {
     const capF = muF * fzF, capR = muR * fzR;
     let lockF = false, lockR = false;
     if (assists.abs) {
-      // ABS does more than stop wheels locking: when the driver asks for front
-      // grip to turn, it holds back front brake force so part of the front
-      // friction circle stays available for cornering. Without this the front
-      // axle spends ~96% of its grip braking and the car washes straight on
-      // under braking, even though steering on throttle (rear-driven) is fine.
+      // ABS + EBD with a cornering reserve. Each axle may use at most `util` of
+      // its grip circle for slowing down (brake + that axle's share of drag),
+      // so the rest stays available as lateral grip to actually turn the car.
+      // Steering lowers `util` so braking can't strip the grip the car needs to
+      // corner. The REAR gets the bigger cut: braking transfers load off it, and
+      // a saturated rear lets the tail slide — the car then spins on the spot
+      // while its path keeps going straight ("slides forward, won't turn").
+      // With no steering both caps fall back to plain ABS lock prevention.
+      // Reserve scales with cornering demand from BOTH the steering input and
+      // the lateral g already being pulled, so as a corner loads up the brakes
+      // ease and the front keeps enough grip to hold the line — without this the
+      // car turns in, then washes/slides as sustained braking saturates the tyre.
       const steerDemand = Math.min(1, Math.abs(input.steer));
-      const latReserveF = 0.6 * steerDemand;
-      const frontLongBudget = capF * Math.sqrt(Math.max(0.04, 1 - latReserveF * latReserveF));
-      brakeF = Math.min(brakeF, frontLongBudget, capF * 0.96);
-      brakeR = Math.min(brakeR, capR * 0.94);
+      const latDemand = Math.min(1, Math.abs(this.aLat) / 18);
+      const corner = Math.max(steerDemand, latDemand);
+      const utilF = 0.96 - 0.19 * corner;
+      const utilR = 0.94 - 0.55 * corner;
+      const dragAxle = dragN * 0.5;          // front/rear share of drag (see fxF/fxR)
+      brakeF = Math.min(brakeF, Math.max(0, capF * utilF - dragAxle));
+      brakeR = Math.min(brakeR, Math.max(0, capR * utilR - dragAxle));
     } else {
       if (brakeF > capF) { lockF = true; brakeF = capF * 0.78; }
       if (brakeR > capR) { lockR = true; brakeR = capR * 0.78; }
