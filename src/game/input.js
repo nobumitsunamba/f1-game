@@ -6,6 +6,14 @@
 // continuous dragging, and the car self-straightens when the cursor sits on
 // the road ahead. [ / ] adjust how aggressively it follows. Mouse mode
 // engages on a mouse press and hands back to the keyboard on a steering key.
+// big high-visibility aiming cursor (yellow ring + center dot)
+const AIM_CURSOR = `url('data:image/svg+xml;utf8,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">' +
+  '<circle cx="18" cy="18" r="11" fill="none" stroke="black" stroke-width="6" opacity="0.85"/>' +
+  '<circle cx="18" cy="18" r="11" fill="none" stroke="#ffd400" stroke-width="3.5"/>' +
+  '<circle cx="18" cy="18" r="2.6" fill="#ffd400" stroke="black" stroke-width="1.2"/>' +
+  '</svg>')}') 18 18, crosshair`;
+
 export class Input {
   constructor() {
     this.keys = new Set();
@@ -44,9 +52,12 @@ export class Input {
       this._mouseL = this._mouseR = false;
     });
 
+    this._steerHold = false;         // respawn: go straight until mouse moves
+    this._steerHoldT = 0;
     window.addEventListener('mousemove', (e) => {
       this.mouseNX = (e.clientX / window.innerWidth) * 2 - 1;
       this.mouseNY = -(e.clientY / window.innerHeight) * 2 + 1;
+      this._steerHold = false;       // player repositioned: resume following
     });
     window.addEventListener('mousedown', (e) => {
       // ignore clicks on UI (menus, buttons) — only the canvas drives the car
@@ -68,7 +79,18 @@ export class Input {
     this.mouseMode = on;
     this.mouseModeChanged = true;
     this.mouseSteerOverride = null;
-    document.body.style.cursor = on ? 'crosshair' : '';
+    document.body.style.cursor = on ? AIM_CURSOR : '';
+  }
+
+  /** After a respawn the wheel stays centered until the mouse moves
+   *  (browsers cannot move the OS cursor for us), max 3 s. */
+  holdSteerUntilMouseMoves() {
+    this._steerHold = true;
+    this._steerHoldT = performance.now();
+  }
+
+  get steerHeld() {
+    return this._steerHold && performance.now() - this._steerHoldT < 3000;
   }
 
   /** Adjust mouse follow strength by steps of 0.2 within 0.4 .. 2.4. */
