@@ -1,10 +1,11 @@
 // Keyboard + mouse + gamepad input with smoothing for keyboard steering.
 // Mouse: hold left button = throttle, hold right button = brake. Steering is
-// RELATIVE — moving the mouse turns the wheel, and it self-centers when the
-// mouse rests. Mapping is nonlinear (gentle near center, stronger towards
-// full lock). Pointer Lock is requested during driving so the cursor never
-// hits the screen edge; [ / ] adjust sensitivity. Mouse mode engages on a
-// mouse press and hands back to the keyboard when a steering key is hit.
+// "pointer-follow": the car turns towards the point on the road the cursor
+// rests on (computed in main.js from the camera ray and fed back through
+// mouseSteerOverride). Put the cursor on the apex and hold it there — no
+// continuous dragging, and the car self-straightens when the cursor sits on
+// the road ahead. [ / ] adjust how aggressively it follows. Mouse mode
+// engages on a mouse press and hands back to the keyboard on a steering key.
 export class Input {
   constructor() {
     this.keys = new Set();
@@ -20,8 +21,9 @@ export class Input {
     this.mouseMode = false;
     this.mouseModeChanged = false;   // edge flag for a HUD hint
     this.mouseSens = Number(localStorage.getItem('mouse-sens')) || 1.0;
-    this._steerAcc = 0;              // internal linear wheel position -1..1
-    this._mouseDX = 0;               // accumulated movement since last frame
+    this.mouseNX = 0;                // cursor in NDC -1..1
+    this.mouseNY = 0;
+    this.mouseSteerOverride = null;  // set by main.js (pointer-follow result)
     this._mouseL = false;
     this._mouseR = false;
 
@@ -43,7 +45,8 @@ export class Input {
     });
 
     window.addEventListener('mousemove', (e) => {
-      if (this.mouseMode) this._mouseDX += e.movementX ?? 0;
+      this.mouseNX = (e.clientX / window.innerWidth) * 2 - 1;
+      this.mouseNY = -(e.clientY / window.innerHeight) * 2 + 1;
     });
     window.addEventListener('mousedown', (e) => {
       // ignore clicks on UI (menus, buttons) — only the canvas drives the car
@@ -51,10 +54,6 @@ export class Input {
       if (e.button === 0) this._mouseL = true;
       if (e.button === 2) this._mouseR = true;
       if (!this.mouseMode) this.setMouseMode(true);
-      // relative steering needs the cursor freed from the screen edges
-      if (document.pointerLockElement == null) {
-        document.getElementById('gl')?.requestPointerLock?.();
-      }
     });
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0) this._mouseL = false;
@@ -68,12 +67,11 @@ export class Input {
   setMouseMode(on) {
     this.mouseMode = on;
     this.mouseModeChanged = true;
-    this._steerAcc = 0;
-    this._mouseDX = 0;
-    if (!on) document.exitPointerLock?.();
+    this.mouseSteerOverride = null;
+    document.body.style.cursor = on ? 'crosshair' : '';
   }
 
-  /** Adjust mouse sensitivity by steps of 0.2 within 0.4 .. 2.4. */
+  /** Adjust mouse follow strength by steps of 0.2 within 0.4 .. 2.4. */
   bumpMouseSens(dir) {
     this.mouseSens = Math.round(
       Math.max(0.4, Math.min(2.4, this.mouseSens + dir * 0.2)) * 10) / 10;
@@ -93,21 +91,9 @@ export class Input {
     if (k.has('ArrowLeft') || k.has('KeyA')) target += 1;
     if (k.has('ArrowRight') || k.has('KeyD')) target -= 1;
     let analog = false;
-    if (this.mouseMode) {
-      // relative steering: mouse movement turns the internal wheel position
-      const dx = this._mouseDX;
-      this._mouseDX = 0;
-      this._steerAcc -= dx * 0.0024 * this.mouseSens;   // left move = steer left
-      this._steerAcc = Math.max(-1, Math.min(1, this._steerAcc));
-      // auto-centering: the wheel springs back while the mouse rests
-      if (Math.abs(dx) < 1) {
-        const back = (0.5 + 1.6 * Math.abs(this._steerAcc)) * dt;
-        this._steerAcc = Math.abs(back) >= Math.abs(this._steerAcc)
-          ? 0 : this._steerAcc - Math.sign(this._steerAcc) * back;
-      }
-      // nonlinear map: gentle around center, full lock still reachable
-      const a = this._steerAcc;
-      target = Math.sign(a) * Math.pow(Math.abs(a), 1.6);
+    if (this.mouseMode && this.mouseSteerOverride != null) {
+      // pointer-follow steering computed against the camera ray in main.js
+      target = this.mouseSteerOverride;
       analog = true;
     }
     if (pad) {

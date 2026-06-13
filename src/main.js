@@ -126,7 +126,7 @@ function buildMenu() {
     <div class="controls-help">
       <b>キーボード:</b> ↑/W アクセル ｜ ↓/S ブレーキ ｜ ←→/A D ステアリング ｜ Space ERSブースト ｜
       X エアロXモード ｜ E/Q ギア ｜ C カメラ ｜ R リスポーン ｜ M ミュート<br>
-      <b>マウス:</b> 左ボタン長押し アクセル ｜ 右ボタン長押し ブレーキ ｜ 左右移動 ハンドル(自動センタリング付き・クリックで有効化) ｜ [ ] 感度調整<br>
+      <b>マウス:</b> カーソルを「行きたい場所」に置くと車がそこへ曲がります(クリックで有効化) ｜ 左ボタン長押し アクセル ｜ 右ボタン長押し ブレーキ ｜ [ ] 追従の強さ<br>
       <b>アシスト切替:</b> F1 トラクション ｜ F2 ABS ｜ F3 スタビリティ ｜ F4 オートシフト ｜ F5 自動エアロ ｜ ゲームパッド対応
     </div>`;
   const teamsEl = menuEl.querySelector('#teams');
@@ -280,7 +280,7 @@ function setStartLights(n, out) {
 
 function backToMenu() {
   state.phase = 'menu';
-  document.exitPointerLock?.();
+  if (input.mouseMode) input.setMouseMode(false);  // normal cursor in menus
   state.race?.dispose();
   state.race = null;
   hud.hideRace();
@@ -293,7 +293,7 @@ function backToMenu() {
 
 function finishRace() {
   state.phase = 'finished';
-  document.exitPointerLock?.();
+  if (input.mouseMode) input.setMouseMode(false);  // normal cursor on results
   timing.running = false;
   const standings = state.race.standings(
     physics, state.lapTarget + 1, state.driver.abbr, state.team);
@@ -318,11 +318,38 @@ const FIXED = 1 / 120;
 let acc = 0;
 let lastBoard = 0;
 
+// pointer-follow mouse steering: steer towards the road point under the
+// cursor (pure-pursuit on the cursor's ground intersection)
+const _aimRay = new THREE.Raycaster();
+const _aimNdc = new THREE.Vector2();
+function updateMouseAim() {
+  if (!input.mouseMode || (state.phase !== 'race' && state.phase !== 'countdown')) {
+    input.mouseSteerOverride = null;
+    return;
+  }
+  _aimRay.setFromCamera(_aimNdc.set(input.mouseNX, input.mouseNY), camera);
+  const o = _aimRay.ray.origin, d = _aimRay.ray.direction;
+  let px, pz;
+  const t = (physics.y - o.y) / (Math.abs(d.y) < 1e-6 ? -1e-6 : d.y);
+  if (t > 1 && t < 600) {                      // cursor on the ground ahead
+    px = o.x + d.x * t; pz = o.z + d.z * t;
+  } else {                                     // near/above horizon: aim far
+    px = o.x + d.x * 80; pz = o.z + d.z * 80;
+  }
+  const dx = px - physics.x, dz = pz - physics.z;
+  const cosH = Math.cos(physics.heading), sinH = Math.sin(physics.heading);
+  const localX = dx * cosH + dz * sinH;        // ahead of the car
+  const localY = -dx * sinH + dz * cosH;       // + = to the right
+  input.mouseSteerOverride = Math.max(-1, Math.min(1,
+    -2.2 * input.mouseSens * Math.atan2(localY, Math.max(4, localX))));
+}
+
 function frame(now) {
   requestAnimationFrame(frame);
   let dt = Math.min(0.1, (now - last) / 1000);
   last = now;
 
+  updateMouseAim();
   input.update(dt);
   handleGlobalKeys();
 
@@ -460,7 +487,7 @@ function handleGlobalKeys() {
     input.mouseModeChanged = false;
     if (state.phase !== 'menu') {
       hud.showMsg(input.mouseMode
-        ? 'マウス操作: 左=アクセル / 右=ブレーキ / 左右移動=ハンドル'
+        ? 'マウス操作: カーソルを置いた方向へ曲がります ｜ 左=アクセル / 右=ブレーキ'
         : 'キーボード操作に戻りました', 2200);
     }
   }
