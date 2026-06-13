@@ -82,6 +82,8 @@ const state = {
   lightsOut: 0,
   race: null,                 // RaceManager when opponents selected
   lapTarget: 3,
+  demo: false,                // demo mode: the AI drives the selected car
+  demoPace: 1,
 };
 const assists = { tc: true, abs: true, stability: true, autoGear: true, autoX: true };
 let muted = false;
@@ -118,6 +120,8 @@ function buildMenu() {
       <button class="opt-btn diff-btn" data-diff="0.88">易しい</button>
       <button class="opt-btn diff-btn sel" data-diff="0.96">普通</button>
       <button class="opt-btn diff-btn" data-diff="1.04">速い</button>
+      <span class="lbl">デモ</span>
+      <button class="opt-btn" id="demo-toggle" title="選択したドライバーをAIが自動で走らせます（自分は操作しません）">AIが自動走行</button>
     </div>
     <button id="start-race" disabled>SELECT DRIVER</button>
     <div class="controls-help">
@@ -130,7 +134,7 @@ function buildMenu() {
   const startBtn = menuEl.querySelector('#start-race');
   let selected = null;
   const opponents = new Set();   // keys "teamId:driverIndex"
-  let lapTarget = 3, difficulty = 0.96;
+  let lapTarget = 3, difficulty = 0.96, demo = false;
   const rows = new Map();        // key -> row element
 
   const keyOf = (team, di) => `${team.id}:${di}`;
@@ -143,9 +147,15 @@ function buildMenu() {
     }
     if (!selected) { startBtn.disabled = true; startBtn.textContent = 'ドライバーを選択してください'; return; }
     startBtn.disabled = false;
-    startBtn.textContent = opponents.size
-      ? `${selected.drv.abbr} で ${opponents.size} 台とレース開始(${lapTarget}周)`
-      : `${selected.drv.abbr} でタイムアタック開始`;
+    if (demo) {
+      startBtn.textContent = opponents.size
+        ? `${selected.drv.abbr} のデモ走行を見る（${opponents.size}台とレース・${lapTarget}周）`
+        : `${selected.drv.abbr} のデモ走行を見る（タイムアタック）`;
+    } else {
+      startBtn.textContent = opponents.size
+        ? `${selected.drv.abbr} で ${opponents.size} 台とレース開始(${lapTarget}周)`
+        : `${selected.drv.abbr} でタイムアタック開始`;
+    }
   };
 
   for (const team of TEAMS) {
@@ -197,6 +207,12 @@ function buildMenu() {
     b.classList.add('sel');
     difficulty = Number(b.dataset.diff);
   });
+  const demoBtn = menuEl.querySelector('#demo-toggle');
+  demoBtn.onclick = () => {
+    demo = !demo;
+    demoBtn.classList.toggle('sel', demo);
+    refresh();
+  };
 
   startBtn.onclick = () => {
     if (!selected) return;
@@ -204,7 +220,7 @@ function buildMenu() {
     for (const team of TEAMS) team.drivers.forEach((drv, di) => {
       if (opponents.has(keyOf(team, di))) entries.push({ team, driver: drv });
     });
-    startRace(selected.team, selected.drv, { entries, lapTarget, difficulty });
+    startRace(selected.team, selected.drv, { entries, lapTarget, difficulty, demo });
   };
   refresh();
 }
@@ -215,6 +231,9 @@ function startRace(team, driver, opts = {}) {
   state.team = team;
   state.driver = driver;
   state.lapTarget = opts.lapTarget ?? 3;
+  state.demo = !!opts.demo;
+  // demo car drives at the chosen driver's pace, comparable to the AI field
+  state.demoPace = (driver.pace ?? 0.98) * (opts.difficulty ?? 0.96);
 
   if (carVis) { scene.remove(carVis.group); }
   carVis = buildCar(team, driver.num);
@@ -242,9 +261,10 @@ function startRace(team, driver, opts = {}) {
   state.phase = 'countdown';
   state.countStart = performance.now();
   buildLightsOverlay();
-  hud.showMsg(state.race
+  const demoTag = state.demo ? '【デモ】AIが自動走行 ｜ Esc でメニュー ｜ ' : '';
+  hud.showMsg(demoTag + (state.race
     ? `${driver.name} ― ${state.race.cars.length}台と${state.lapTarget}周レース`
-    : `${driver.name} ― 鈴鹿サーキット タイムアタック`, 3000);
+    : `${driver.name} ― 鈴鹿サーキット タイムアタック`), state.demo ? 4500 : 3000);
 }
 
 const lightsEl = document.getElementById('lights');
@@ -366,15 +386,22 @@ function frame(now) {
 
   if (state.phase === 'race' || state.phase === 'finished') {
     acc += dt;
-    const frameInput = state.phase === 'finished'
-      ? { throttle: 0, brake: 0.3, steer: input.steer }   // coast to a stop
-      : window.__sim?.autopilot
-        ? autopilotControl(physics)
-        : {
-          throttle: input.throttle, brake: input.brake, steer: input.steer,
-          boost: input.boost, xModeRequest: input.xModeRequest,
-          gearUp: input.gearUp, gearDown: input.gearDown,
-        };
+    let frameInput;
+    if (state.phase === 'finished') {
+      frameInput = { throttle: 0, brake: 0.3, steer: input.steer };   // coast to a stop
+    } else if (state.demo || window.__sim?.autopilot) {
+      // demo mode: the AI drives the selected car, avoiding the other cars
+      const others = state.race?.cars.map(c => ({
+        x: c.physics.x, z: c.physics.z, s: c.physics.trackS(), speed: c.physics.speed,
+      }));
+      frameInput = autopilotControl(physics, { pace: state.demoPace, others });
+    } else {
+      frameInput = {
+        throttle: input.throttle, brake: input.brake, steer: input.steer,
+        boost: input.boost, xModeRequest: input.xModeRequest,
+        gearUp: input.gearUp, gearDown: input.gearDown,
+      };
+    }
     while (acc >= FIXED) {
       physics.step(FIXED, frameInput, assists);
       state.race?.step(FIXED, physics);
@@ -400,7 +427,8 @@ function frame(now) {
     }
 
     rig.update(physics, dt);
-    audio.update(physics, state.phase === 'finished' ? 0 : input.throttle);
+    audio.update(physics, state.phase === 'finished' ? 0
+      : state.demo ? frameInput.throttle : input.throttle);
 
     // ---- auto-respawn: stopped off track -> 3 s countdown near the car ----
     if (state.phase === 'race' && !physics.onTrack && physics.speed < 2.0) stuckTimer += dt;
