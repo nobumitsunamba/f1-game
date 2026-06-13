@@ -126,7 +126,7 @@ function buildMenu() {
     <div class="controls-help">
       <b>キーボード:</b> ↑/W アクセル ｜ ↓/S ブレーキ ｜ ←→/A D ステアリング ｜ Space ERSブースト ｜
       X エアロXモード ｜ E/Q ギア ｜ C カメラ ｜ R リスポーン ｜ M ミュート<br>
-      <b>マウス:</b> 左ボタン長押し アクセル ｜ 右ボタン長押し ブレーキ ｜ 左右移動 ハンドル(画面中央=直進、クリックで有効化)<br>
+      <b>マウス:</b> 左ボタン長押し アクセル ｜ 右ボタン長押し ブレーキ ｜ 左右移動 ハンドル(自動センタリング付き・クリックで有効化) ｜ [ ] 感度調整<br>
       <b>アシスト切替:</b> F1 トラクション ｜ F2 ABS ｜ F3 スタビリティ ｜ F4 オートシフト ｜ F5 自動エアロ ｜ ゲームパッド対応
     </div>`;
   const teamsEl = menuEl.querySelector('#teams');
@@ -280,6 +280,7 @@ function setStartLights(n, out) {
 
 function backToMenu() {
   state.phase = 'menu';
+  document.exitPointerLock?.();
   state.race?.dispose();
   state.race = null;
   hud.hideRace();
@@ -292,6 +293,7 @@ function backToMenu() {
 
 function finishRace() {
   state.phase = 'finished';
+  document.exitPointerLock?.();
   timing.running = false;
   const standings = state.race.standings(
     physics, state.lapTarget + 1, state.driver.abbr, state.team);
@@ -462,6 +464,10 @@ function handleGlobalKeys() {
         : 'キーボード操作に戻りました', 2200);
     }
   }
+  if (input.pressed('BracketLeft') || input.pressed('BracketRight')) {
+    const s = input.bumpMouseSens(input.pressed('BracketRight') ? 1 : -1);
+    hud.showMsg(`マウス感度: ${s.toFixed(1)}`, 1200);
+  }
   if (input.pressed('KeyC')) {
     rig.cycle();
     hud.showMsg(`カメラ: ${CAMERA_MODES[rig.mode]}`, 1200);
@@ -493,7 +499,7 @@ requestAnimationFrame(() => { document.getElementById('fade').style.opacity = 0;
 
 // debug handle (used by automated verification; harmless in production)
 window.__sim = {
-  physics, rig, timing, state, autopilot: false,
+  physics, rig, timing, state, input, autopilot: false,
   teleport: (s, speed = 40) => {
     physics.reset(s, 0);
     physics.u = speed;

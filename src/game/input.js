@@ -1,7 +1,10 @@
 // Keyboard + mouse + gamepad input with smoothing for keyboard steering.
-// Mouse: hold left button = throttle, hold right button = brake, horizontal
-// position steers (center of the window = straight). Mouse mode engages on
-// a mouse press and hands back to the keyboard when a steering key is hit.
+// Mouse: hold left button = throttle, hold right button = brake. Steering is
+// RELATIVE — moving the mouse turns the wheel, and it self-centers when the
+// mouse rests. Mapping is nonlinear (gentle near center, stronger towards
+// full lock). Pointer Lock is requested during driving so the cursor never
+// hits the screen edge; [ / ] adjust sensitivity. Mouse mode engages on a
+// mouse press and hands back to the keyboard when a steering key is hit.
 export class Input {
   constructor() {
     this.keys = new Set();
@@ -16,7 +19,9 @@ export class Input {
     this.toggles = {};       // edge-triggered named keys
     this.mouseMode = false;
     this.mouseModeChanged = false;   // edge flag for a HUD hint
-    this._mouseX = 0.5;              // 0..1 across the window
+    this.mouseSens = Number(localStorage.getItem('mouse-sens')) || 1.0;
+    this._steerAcc = 0;              // internal linear wheel position -1..1
+    this._mouseDX = 0;               // accumulated movement since last frame
     this._mouseL = false;
     this._mouseR = false;
 
@@ -25,8 +30,7 @@ export class Input {
       this.keys.add(e.code);
       this._edges.add(e.code);
       if (['ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD'].includes(e.code) && this.mouseMode) {
-        this.mouseMode = false;
-        this.mouseModeChanged = true;
+        this.setMouseMode(false);
       }
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
         e.preventDefault();
@@ -39,14 +43,18 @@ export class Input {
     });
 
     window.addEventListener('mousemove', (e) => {
-      this._mouseX = e.clientX / window.innerWidth;
+      if (this.mouseMode) this._mouseDX += e.movementX ?? 0;
     });
     window.addEventListener('mousedown', (e) => {
       // ignore clicks on UI (menus, buttons) — only the canvas drives the car
       if (e.target.closest?.('button, #menu, #results')) return;
       if (e.button === 0) this._mouseL = true;
       if (e.button === 2) this._mouseR = true;
-      if (!this.mouseMode) { this.mouseMode = true; this.mouseModeChanged = true; }
+      if (!this.mouseMode) this.setMouseMode(true);
+      // relative steering needs the cursor freed from the screen edges
+      if (document.pointerLockElement == null) {
+        document.getElementById('gl')?.requestPointerLock?.();
+      }
     });
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0) this._mouseL = false;
@@ -55,6 +63,22 @@ export class Input {
     window.addEventListener('contextmenu', (e) => {
       if (!e.target.closest?.('#menu, #results')) e.preventDefault();
     });
+  }
+
+  setMouseMode(on) {
+    this.mouseMode = on;
+    this.mouseModeChanged = true;
+    this._steerAcc = 0;
+    this._mouseDX = 0;
+    if (!on) document.exitPointerLock?.();
+  }
+
+  /** Adjust mouse sensitivity by steps of 0.2 within 0.4 .. 2.4. */
+  bumpMouseSens(dir) {
+    this.mouseSens = Math.round(
+      Math.max(0.4, Math.min(2.4, this.mouseSens + dir * 0.2)) * 10) / 10;
+    localStorage.setItem('mouse-sens', String(this.mouseSens));
+    return this.mouseSens;
   }
 
   /** Edge-triggered: was this key pressed since last frame? */
@@ -70,9 +94,20 @@ export class Input {
     if (k.has('ArrowRight') || k.has('KeyD')) target -= 1;
     let analog = false;
     if (this.mouseMode) {
-      // window center = straight; full lock at 70 % of the way to the edge
-      const n = (this._mouseX - 0.5) * 2;          // -1 (left) .. +1 (right)
-      target = Math.max(-1, Math.min(1, -n / 0.7));
+      // relative steering: mouse movement turns the internal wheel position
+      const dx = this._mouseDX;
+      this._mouseDX = 0;
+      this._steerAcc -= dx * 0.0024 * this.mouseSens;   // left move = steer left
+      this._steerAcc = Math.max(-1, Math.min(1, this._steerAcc));
+      // auto-centering: the wheel springs back while the mouse rests
+      if (Math.abs(dx) < 1) {
+        const back = (0.5 + 1.6 * Math.abs(this._steerAcc)) * dt;
+        this._steerAcc = Math.abs(back) >= Math.abs(this._steerAcc)
+          ? 0 : this._steerAcc - Math.sign(this._steerAcc) * back;
+      }
+      // nonlinear map: gentle around center, full lock still reachable
+      const a = this._steerAcc;
+      target = Math.sign(a) * Math.pow(Math.abs(a), 1.6);
       analog = true;
     }
     if (pad) {
