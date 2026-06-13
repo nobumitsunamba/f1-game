@@ -29,30 +29,33 @@
   .team .tname small { color: #8090b0; font-weight: normal; }
   .drv { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
     background: rgba(255,255,255,0.05); color: #fff; border: 1px solid transparent;
-    border-radius: 7px; padding: 7px 10px; margin: 4px 0; cursor: pointer; font-size: 14px; }
+    border-radius: 7px; padding: 6px 10px; margin: 4px 0; cursor: pointer; font-size: 14px; }
   .drv:hover { background: rgba(255,255,255,0.14); }
   .drv.sel { border-color: #ff1801; background: rgba(255,24,1,0.18); }
+  .drv.opp { border-color: #00c2ff; background: rgba(0,194,255,0.13); }
   .drv .dnum { font-weight: bold; font-style: italic; width: 34px; font-size: 17px; }
   .drv small { color: #8090b0; margin-left: auto; }
+  .drv .vs { flex: none; font-size: 11.5px; font-weight: bold; padding: 4px 10px;
+    border-radius: 5px; border: 1px solid #2a3a5e; background: rgba(255,255,255,0.06);
+    color: #8090b0; cursor: pointer; }
+  .drv .vs:hover { background: rgba(0,194,255,0.25); color: #fff; }
+  .drv.opp .vs { background: #00c2ff; color: #002; border-color: #00c2ff; }
+  .drv.sel .vs { visibility: hidden; }
+  .drv .me-tag { flex: none; font-size: 11.5px; font-weight: bold; color: #ff5d45;
+    display: none; }
+  .drv.sel .me-tag { display: inline; }
   #start-race { margin-top: 24px; font-size: 20px; font-weight: bold; letter-spacing: 1px;
     padding: 14px 64px; border: none; border-radius: 8px; cursor: pointer;
     background: linear-gradient(180deg, #ff3b1d, #c81000); color: #fff; }
   #start-race:disabled { background: #444; color: #999; cursor: default; }
 
-  /* opponent / race options */
-  #race-setup { display: none; width: min(1280px, 96vw); margin-top: 18px;
-    border: 1px solid #2a3a5e; border-radius: 10px; padding: 14px 16px;
+  /* race options bar */
+  #race-opts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    justify-content: center; width: min(1280px, 96vw); margin-top: 16px;
+    border: 1px solid #2a3a5e; border-radius: 10px; padding: 10px 14px;
     background: rgba(10,16,34,0.7); }
-  #race-setup h3 { font-size: 15px; margin-bottom: 4px; }
-  #race-setup .hint { color: #8090b0; font-size: 12px; margin-bottom: 10px; }
-  #opp-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 12px; }
-  .opp-chip { display: flex; align-items: center; gap: 6px; font-size: 12.5px;
-    padding: 6px 11px; border-radius: 16px; cursor: pointer; color: #cdd6e8;
-    background: rgba(255,255,255,0.05); border: 1px solid #2a3a5e; }
-  .opp-chip i { width: 10px; height: 10px; border-radius: 2px; }
-  .opp-chip.sel { border-color: #ff1801; background: rgba(255,24,1,0.2); color: #fff; }
-  .opt-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-  .opt-row .lbl { color: #8090b0; font-size: 12.5px; width: 72px; }
+  #race-opts .lbl { color: #8090b0; font-size: 12.5px; margin-left: 14px; }
+  #race-opts .lbl:first-child { margin-left: 0; }
   .opt-btn { font-size: 13px; padding: 5px 16px; border-radius: 6px; cursor: pointer;
     background: rgba(255,255,255,0.06); color: #cdd6e8; border: 1px solid #2a3a5e; }
   .opt-btn.sel { border-color: #00c2ff; background: rgba(0,194,255,0.18); color: #fff; }

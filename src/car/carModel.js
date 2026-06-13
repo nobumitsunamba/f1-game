@@ -212,8 +212,9 @@ export function buildCar(team, num, opts = {}) {
         w.children.forEach(ch => { ch.rotation.y -= (state.wheelSpin ?? 0); });
       }
       rearFlap.rotation.z = state.xMode ? -0.04 : -0.45;
-      body.rotation.z = -(state.pitch ?? 0) * 0.5;
-      body.rotation.x = (state.roll ?? 0);
+      // no visual body roll/pitch: all four wheels stay planted on the road
+      body.rotation.z = 0;
+      body.rotation.x = 0;
     },
   };
 }

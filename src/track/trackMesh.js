@@ -441,29 +441,29 @@ function buildGrandstand(s, lateral, len = 120) {
   const p = sampleAt(s);
   const side = Math.sign(lateral);
 
-  // push the stand outward until its full footprint clears the barriers of
-  // every part of the circuit (a straight stand beside a curving road, or
-  // another limb of the figure-8, can otherwise end up on the racing surface)
-  for (let guard = 0; guard < 12; guard++) {
-    let ok = true;
-    for (let f = -len / 2; f <= len / 2 && ok; f += len / 6) {
-      for (const zLocal of [1, -14]) {  // front edge .. back of roof
-        const off = lateral - side * zLocal;
-        const lx = p.x + p.nrmX * off + p.tanX * f;
-        const lz = p.z + p.nrmZ * off + p.tanZ * f;
-        // nearest centerline point anywhere, with its own wall offset
-        let best = Infinity, bq = null;
-        for (const q of SAMPLES) {
-          const d = (q.x - lx) ** 2 + (q.z - lz) ** 2;
-          if (d < best) { best = d; bq = q; }
-        }
-        const runoff = Math.abs(bq.curv) > 0.008 ? 26 : 14;
-        if (Math.sqrt(best) < Math.max(bq.wL, bq.wR) + runoff + 2) { ok = false; break; }
-      }
+  // Exact footprint check: the stand rectangle (expanded by each sample's
+  // road width + runoff) must contain NO centerline sample. Probing a few
+  // corner points let roads slip diagonally between probes — that is how a
+  // stand ended up across the hairpin. Push outward until clear; give up
+  // and build nothing rather than overlap the track.
+  const clearAt = (lat) => {
+    const zNear = lat - side * 1, zFar = lat + side * 14; // front edge .. back
+    const vMin = Math.min(zNear, zFar), vMax = Math.max(zNear, zFar);
+    for (const q of SAMPLES) {
+      const u = (q.x - p.x) * p.tanX + (q.z - p.z) * p.tanZ;
+      const v = (q.x - p.x) * p.nrmX + (q.z - p.z) * p.nrmZ;
+      const runoff = Math.abs(q.curv) > 0.008 ? 26 : 14;
+      const m = Math.max(q.wL, q.wR) + runoff + 2;
+      if (u > -len / 2 - m && u < len / 2 + m && v > vMin - m && v < vMax + m) return false;
     }
-    if (ok) break;
-    lateral += side * 5;
+    return true;
+  };
+  let placed = false;
+  for (let guard = 0; guard < 14; guard++) {
+    if (clearAt(lateral)) { placed = true; break; }
+    lateral += side * 6;
   }
+  if (!placed) return group;   // no safe spot — skip this stand
   const yaw = Math.atan2(p.tanX, p.tanZ) + Math.PI / 2; // local x along track
 
   const crowdTex = canvasTexture(512, 128, (ctx, w, h) => {
@@ -697,7 +697,7 @@ export function buildTrackWorld() {
   // grandstands: main straight (left), T1, hairpin, chicane
   world.add(buildGrandstand(150, 28, 300));
   world.add(buildGrandstand(760, -48, 90));
-  world.add(buildGrandstand(2920, 42, 90));
+  world.add(buildGrandstand(2920, -42, 90));   // OUTSIDE of the hairpin
   world.add(buildGrandstand(5420, 36, 110));
 
   // Ferris wheel: search the paddock side of the pit straight for a spot
