@@ -1,6 +1,6 @@
 // F1 2026 Suzuka Simulator — entry point.
 // Wires together: scene/lighting, track world, car physics & model, cameras,
-// HUD, audio, timing/ghost, driver-select UI and the race start sequence.
+// HUD, audio, timing, driver-select UI and the race start sequence.
 import * as THREE from 'three';
 import { buildTrackWorld } from './track/trackMesh.js';
 import { TOTAL_LENGTH, TRACK_NAME } from './track/suzuka.js';
@@ -12,7 +12,6 @@ import { CameraRig, CAMERA_MODES } from './game/cameras.js';
 import { Hud } from './game/hud.js';
 import { Timing, fmtTime } from './game/timing.js';
 import { EngineAudio } from './game/audio.js';
-import { Ghost } from './game/ghost.js';
 import { autopilotControl } from './game/autopilot.js';
 import { RaceManager } from './game/race.js';
 
@@ -92,11 +91,9 @@ const rig = new CameraRig(camera);
 const hud = new Hud(document.getElementById('hud'));
 const timing = new Timing();
 const audio = new EngineAudio();
-const ghost = new Ghost();
 
 const physics = new CarPhysics();
 let carVis = null;            // player car model
-let ghostVis = null;          // ghost car model
 let wheelSpinAcc = 0;
 let stuckTimer = 0;           // off-track-and-stopped auto-respawn countdown
 const RESPAWN_AFTER = 3;      // seconds
@@ -222,12 +219,6 @@ function startRace(team, driver, opts = {}) {
   if (carVis) { scene.remove(carVis.group); }
   carVis = buildCar(team, driver.num);
   scene.add(carVis.group);
-  if (!ghostVis) {
-    ghostVis = buildCar(team, driver.num, { ghost: true });
-    scene.add(ghostVis.group);
-  }
-  ghostVis.group.visible = false;
-
   state.race?.dispose();
   state.race = null;
   if (opts.entries?.length) {
@@ -238,7 +229,6 @@ function startRace(team, driver, opts = {}) {
   }
   stuckTimer = 0;
   timing.reset();
-  ghost.beginLap();
   hud.setDriver(team, driver);
   hud.hideRace();
   document.getElementById('results').style.display = 'none';
@@ -327,6 +317,10 @@ function updateMouseAim() {
     input.mouseSteerOverride = null;
     return;
   }
+  if (input.steerHeld) {             // just respawned: straight until reaim
+    input.mouseSteerOverride = 0;
+    return;
+  }
   _aimRay.setFromCamera(_aimNdc.set(input.mouseNX, input.mouseNY), camera);
   const o = _aimRay.ray.origin, d = _aimRay.ray.direction;
   let px, pz;
@@ -390,18 +384,13 @@ function frame(now) {
     physics._boosting = input.boost;
     state.race?.updateVisuals();
 
-    // timing / ghost (ghost car only in time attack)
+    // timing
     const s = physics.trackS();
     if (state.phase === 'race') {
       timing.update(dt, s);
-      if (timing.running && timing.lap > 0 && !state.race) ghost.record(timing.lapTime, physics);
       if (timing.lapJustCompleted != null) {
         const t = timing.lapJustCompleted;
         const isBest = timing.bestLap === t;
-        if (!state.race) {
-          ghost.lapDone(t, isBest);
-          ghost.beginLap();
-        }
         if (state.race && timing.lap > state.lapTarget) {
           finishRace();
         } else {
@@ -422,6 +411,7 @@ function frame(now) {
         physics.reset(physics.trackS(), 0);   // nearest centerline point
         physics.u = 8;
         rig.snapBehind(physics);
+        input.holdSteerUntilMouseMoves();     // wheel centered after respawn
         stuckTimer = 0;
         hud.hideRespawn();
         hud.showMsg('コースに復帰しました', 1200);
@@ -456,20 +446,9 @@ function frame(now) {
     sun.position.set(physics.x + 250, physics.y + 350, physics.z - 150);
   }
 
-  // ghost visuals
-  let ghostPose = null;
-  if (ghostVis && state.phase === 'race' && timing.running) {
-    ghostPose = ghost.poseAt(timing.lapTime);
-    if (ghostPose && timing.lap > 0) {
-      ghostVis.group.visible = true;
-      ghostVis.group.position.set(ghostPose.x, ghostPose.y, ghostPose.z);
-      ghostVis.group.rotation.set(0, -ghostPose.h, 0);
-    } else ghostVis.group.visible = false;
-  }
-
   if (state.phase !== 'menu') {
     hud.update(physics, timing, assists,
-      ghostPose, '#' + state.team.color.toString(16).padStart(6, '0'));
+      null, '#' + state.team.color.toString(16).padStart(6, '0'));
     if (state.race && now - lastBoard > 250) {
       lastBoard = now;
       const standings = state.race.standings(
@@ -504,6 +483,7 @@ function handleGlobalKeys() {
     const s = physics.trackS();
     physics.reset(s, 0);
     physics.u = 8;
+    input.holdSteerUntilMouseMoves();
     hud.showMsg('リスポーン', 1000);
   }
   if (input.pressed('KeyM')) { muted = !muted; audio.setMuted(muted); }
