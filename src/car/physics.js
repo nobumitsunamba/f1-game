@@ -211,8 +211,8 @@ export class CarPhysics {
       // while its path keeps going straight ("slides forward, won't turn").
       // With no steering both caps fall back to plain ABS lock prevention.
       const steerDemand = Math.min(1, Math.abs(input.steer));
-      const utilF = 0.96 - 0.32 * steerDemand;
-      const utilR = 0.94 - 0.60 * steerDemand;
+      const utilF = 0.96 - 0.15 * steerDemand;
+      const utilR = 0.94 - 0.55 * steerDemand;
       const dragAxle = dragN * 0.5;          // front/rear share of drag (see fxF/fxR)
       brakeF = Math.min(brakeF, Math.max(0, capF * utilF - dragAxle));
       brakeR = Math.min(brakeR, Math.max(0, capR * utilR - dragAxle));
