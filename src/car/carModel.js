@@ -2,6 +2,7 @@
 // shorter than 2022-25 cars per the 2026 regulations, with wheel covers,
 // halo, and team livery colors. +X is forward in car local space.
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 
 const Y = 0.0; // ground reference; wheel radius lifts the body
 
@@ -10,6 +11,24 @@ function mat(color, opts = {}) {
     color, roughness: opts.roughness ?? 0.35, metalness: opts.metalness ?? 0.55,
     ...opts,
   });
+}
+
+// Glossy car paint: a coloured base under a clear lacquer coat. The clearcoat
+// catches the environment map for a wet, real-paint sheen instead of flat fill.
+function paint(color, opts = {}) {
+  return new THREE.MeshPhysicalMaterial({
+    color, roughness: 0.38, metalness: 0.35,
+    clearcoat: 1.0, clearcoatRoughness: 0.08, envMapIntensity: 1.1,
+    ...opts,
+  });
+}
+
+// Rounded-edge box: soft chamfers read far less "blocky" than a raw cube while
+// staying cheap. Radius is clamped so thin panels stay valid. Segments kept low
+// (full grid = 22 cars) to hold the polygon/draw budget down.
+function rbox(w, h, d, r = 0.06, seg = 2) {
+  r = Math.max(0.012, Math.min(r, Math.min(w, h, d) * 0.48));
+  return new RoundedBoxGeometry(w, h, d, seg, r);
 }
 
 function numberTexture(num, fg = '#ffffff', bg = null) {
@@ -41,18 +60,18 @@ export function buildCar(team, num, opts = {}) {
   const gOpts = ghost
     ? { transparent: true, opacity: 0.35, depthWrite: false }
     : {};
-  const liv = mat(team.color, { roughness: 0.3, metalness: 0.6, ...gOpts });
-  const acc = mat(team.accent, { roughness: 0.35, metalness: 0.5, ...gOpts });
-  const carbon = mat(0x141414, { roughness: 0.55, metalness: 0.3, ...gOpts });
-  const tire = mat(0x161616, { roughness: 0.92, metalness: 0.05, ...gOpts });
+  const liv = paint(team.color, gOpts);
+  const acc = paint(team.accent, gOpts);
+  const carbon = mat(0x121212, { roughness: 0.5, metalness: 0.35, envMapIntensity: 0.7, ...gOpts });
+  const tire = mat(0x141414, { roughness: 0.95, metalness: 0.02, envMapIntensity: 0.4, ...gOpts });
+  const chrome = mat(0x9aa0a6, { roughness: 0.18, metalness: 1.0, envMapIntensity: 1.2, ...gOpts });
 
   const wheelR = 0.355, wheelW = 0.30; // 2026: narrower tires
   const ride = wheelR;
 
   // ---- floor ----
   {
-    const g = new THREE.BoxGeometry(3.4, 0.05, 1.5);
-    const m = new THREE.Mesh(g, carbon);
+    const m = new THREE.Mesh(rbox(3.4, 0.05, 1.5, 0.03), carbon);
     m.position.set(-0.3, 0.06, 0);
     body.add(m);
   }
@@ -67,8 +86,7 @@ export function buildCar(team, num, opts = {}) {
     [1.78, 0.7, 0.26, 0.16, 0.27, acc],    // nose tip
   ];
   for (const [x, len, w, hgt, y, m] of spineSegs) {
-    const g = new THREE.BoxGeometry(len, hgt, w);
-    const mesh = new THREE.Mesh(g, m);
+    const mesh = new THREE.Mesh(rbox(len, hgt, w, 0.1), m);
     mesh.position.set(x, y, 0);
     body.add(mesh);
   }
@@ -85,7 +103,7 @@ export function buildCar(team, num, opts = {}) {
 
   // ---- sidepods ----
   for (const side of [-1, 1]) {
-    const pod = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.34, 0.42), liv);
+    const pod = new THREE.Mesh(rbox(1.5, 0.34, 0.42, 0.12), liv);
     pod.position.set(-0.75, 0.30, side * 0.62);
     body.add(pod);
     const inlet = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.22, 0.3), carbon);
@@ -95,7 +113,7 @@ export function buildCar(team, num, opts = {}) {
 
   // ---- halo ----
   {
-    const tube = new THREE.TorusGeometry(0.42, 0.04, 8, 24, Math.PI);
+    const tube = new THREE.TorusGeometry(0.42, 0.04, 14, 32, Math.PI);
     const hoop = new THREE.Mesh(tube, carbon);
     hoop.rotation.x = Math.PI / 2;
     hoop.rotation.z = Math.PI;
@@ -182,15 +200,20 @@ export function buildCar(team, num, opts = {}) {
   ];
   for (const [wx, wz, front] of wheelPos) {
     const wg = new THREE.Group();
+    // smoother tyre barrel (more radial segments rounds the silhouette)
     const tyre = new THREE.Mesh(
-      new THREE.CylinderGeometry(wheelR, wheelR, wheelW, 20), tire);
+      new THREE.CylinderGeometry(wheelR, wheelR, wheelW, 32), tire);
     tyre.rotation.x = Math.PI / 2;
     wg.add(tyre);
+    // 2026 wheel cover (reflective aero disc)
     const cover = new THREE.Mesh(
-      new THREE.CylinderGeometry(wheelR * 0.62, wheelR * 0.62, wheelW + 0.012, 16),
-      mat(0x888888, { roughness: 0.25, metalness: 0.85, ...gOpts }));
+      new THREE.CylinderGeometry(wheelR * 0.62, wheelR * 0.62, wheelW + 0.014, 28), chrome);
     cover.rotation.x = Math.PI / 2;
     wg.add(cover);
+    const hub = new THREE.Mesh(
+      new THREE.CylinderGeometry(wheelR * 0.16, wheelR * 0.16, wheelW + 0.03, 12), acc);
+    hub.rotation.x = Math.PI / 2;
+    wg.add(hub);
     wg.position.set(wx, ride, wz);
     wg.userData.front = front;
     root.add(wg);

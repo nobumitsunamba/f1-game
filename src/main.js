@@ -2,6 +2,7 @@
 // Wires together: scene/lighting, track world, car physics & model, cameras,
 // HUD, audio, timing, driver-select UI and the race start sequence.
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { buildTrackWorld } from './track/trackMesh.js';
 import { TOTAL_LENGTH, TRACK_NAME } from './track/suzuka.js';
 import { buildCar } from './car/carModel.js';
@@ -67,7 +68,18 @@ sun.shadow.camera.left = -SHADOW_R; sun.shadow.camera.right = SHADOW_R;
 sun.shadow.camera.top = SHADOW_R; sun.shadow.camera.bottom = -SHADOW_R;
 sun.shadow.bias = -0.0004;
 scene.add(sun, sun.target);
-scene.add(new THREE.HemisphereLight(0xbdd5f2, 0x55683f, 1.25));
+scene.add(new THREE.HemisphereLight(0xbdd5f2, 0x55683f, 1.05));
+
+// image-based lighting: a neutral studio environment so the cars' painted and
+// carbon surfaces pick up soft reflections and read as real materials (the
+// single biggest realism lift, and nearly free per frame once baked).
+{
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envScene = new RoomEnvironment();
+  scene.environment = pmrem.fromScene(envScene, 0.04).texture;
+  scene.environmentIntensity = 0.45;
+  pmrem.dispose();
+}
 
 // ---------- world ----------
 const { world, startLights, ferrisWheel } = buildTrackWorld();
