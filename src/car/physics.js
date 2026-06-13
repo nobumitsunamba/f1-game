@@ -202,7 +202,15 @@ export class CarPhysics {
     const capF = muF * fzF, capR = muR * fzR;
     let lockF = false, lockR = false;
     if (assists.abs) {
-      brakeF = Math.min(brakeF, capF * 0.96);
+      // ABS does more than stop wheels locking: when the driver asks for front
+      // grip to turn, it holds back front brake force so part of the front
+      // friction circle stays available for cornering. Without this the front
+      // axle spends ~96% of its grip braking and the car washes straight on
+      // under braking, even though steering on throttle (rear-driven) is fine.
+      const steerDemand = Math.min(1, Math.abs(input.steer));
+      const latReserveF = 0.6 * steerDemand;
+      const frontLongBudget = capF * Math.sqrt(Math.max(0.04, 1 - latReserveF * latReserveF));
+      brakeF = Math.min(brakeF, frontLongBudget, capF * 0.96);
       brakeR = Math.min(brakeR, capR * 0.94);
     } else {
       if (brakeF > capF) { lockF = true; brakeF = capF * 0.78; }
